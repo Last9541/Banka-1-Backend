@@ -6,12 +6,65 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Unit tests for {@link RetryTaskQueue}.
  */
 class RetryTaskQueueUnitTest {
+
+    @Test
+    void scheduleWithNullDeliveryIdIsIgnored() {
+        RetryTaskQueue queue = new RetryTaskQueue();
+        queue.schedule(null, Instant.now());
+        assertNull(queue.peek());
+    }
+
+    @Test
+    void scheduleWithNullNextAttemptAtIsIgnored() {
+        RetryTaskQueue queue = new RetryTaskQueue();
+        queue.schedule("delivery-1", null);
+        assertNull(queue.peek());
+    }
+
+    @Test
+    void scheduleSameDeliveryIdWithSameTimestampDoesNotAddDuplicateEntry() {
+        RetryTaskQueue queue = new RetryTaskQueue();
+        Instant t = Instant.parse("2026-03-07T12:00:05Z");
+
+        queue.schedule("delivery-1", t);
+        queue.schedule("delivery-1", t);
+
+        Instant afterT = t.plusSeconds(1);
+        RetryTask first = queue.pollDue(afterT);
+        assertNotNull(first);
+        assertNull(queue.pollDue(afterT));
+    }
+
+    @Test
+    void pollDueOnEmptyQueueReturnsNull() {
+        RetryTaskQueue queue = new RetryTaskQueue();
+        assertNull(queue.pollDue(Instant.now()));
+    }
+
+    @Test
+    void pollDueDiscardsMultipleStaleEntriesAndReturnsCurrentOne() {
+        RetryTaskQueue queue = new RetryTaskQueue();
+        Instant stale1 = Instant.parse("2026-03-07T12:00:01Z");
+        Instant stale2 = Instant.parse("2026-03-07T12:00:02Z");
+        Instant current = Instant.parse("2026-03-07T12:00:05Z");
+
+        queue.schedule("delivery-1", stale1);
+        queue.schedule("delivery-1", stale2);
+        queue.schedule("delivery-1", current);
+
+        Instant afterAll = current.plusSeconds(1);
+        RetryTask polled = queue.pollDue(afterAll);
+        assertNotNull(polled);
+        assertEquals(current, polled.nextAttemptAt());
+        assertNull(queue.pollDue(afterAll));
+    }
 
     @Test
     void queueReturnsEarliestTaskFirst() {

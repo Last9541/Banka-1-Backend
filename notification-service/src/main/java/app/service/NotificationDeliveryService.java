@@ -6,6 +6,7 @@ import app.dto.RetryTask;
 import app.entities.NotificationDelivery;
 import app.entities.NotificationDeliveryStatus;
 import app.entities.NotificationType;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
@@ -69,6 +70,23 @@ public class NotificationDeliveryService {
     private int startupPageSize;
 
     /**
+     * Validates that retry configuration values are sensible at startup.
+     */
+    @PostConstruct
+    void validateRetryConfig() {
+        if (defaultMaxRetries < 1) {
+            throw new IllegalStateException(
+                    "notification.retry.max-retries must be >= 1, got: " + defaultMaxRetries
+            );
+        }
+        if (retryDelaySeconds < 1) {
+            throw new IllegalStateException(
+                    "notification.retry.delay-seconds must be >= 1, got: " + retryDelaySeconds
+            );
+        }
+    }
+
+    /**
      * Handles a newly consumed RabbitMQ message using the raw routing key.
      *
      * @param req incoming notification payload
@@ -97,7 +115,7 @@ public class NotificationDeliveryService {
      * @param notificationType type resolved from the RabbitMQ routing key
      */
     @Transactional
-    public void handleIncomingMessage(
+    void handleIncomingMessage(
             NotificationRequest req,
             NotificationType notificationType
     ) {
@@ -400,10 +418,15 @@ public class NotificationDeliveryService {
      * @return resolved event type when supported
      */
     private Optional<NotificationType> resolveNotificationType(String routingKey) {
+        if (routingKey == null) {
+            return Optional.empty();
+        }
         return switch (routingKey) {
-            case "employee.created" -> Optional.of(NotificationType.EMPLOYEE_CREATED);
-            case "employee.password_reset" -> Optional.of(NotificationType.EMPLOYEE_PASSWORD_RESET);
-            case "employee.account_deactivated" ->
+            case NotificationType.ROUTING_KEY_EMPLOYEE_CREATED ->
+                    Optional.of(NotificationType.EMPLOYEE_CREATED);
+            case NotificationType.ROUTING_KEY_EMPLOYEE_PASSWORD_RESET ->
+                    Optional.of(NotificationType.EMPLOYEE_PASSWORD_RESET);
+            case NotificationType.ROUTING_KEY_EMPLOYEE_ACCOUNT_DEACTIVATED ->
                     Optional.of(NotificationType.EMPLOYEE_ACCOUNT_DEACTIVATED);
             default -> Optional.empty();
         };
@@ -438,7 +461,7 @@ public class NotificationDeliveryService {
      * @return trimmed error text up to 1000 characters
      */
     private String trimError(Exception ex) {
-        String error = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+        String error = ex.getClass().getSimpleName();
         if (error.length() <= MAX_ERROR_LENGTH) {
             return error;
         }

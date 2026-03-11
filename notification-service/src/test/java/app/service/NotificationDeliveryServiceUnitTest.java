@@ -30,6 +30,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -227,7 +228,7 @@ class NotificationDeliveryServiceUnitTest {
         assertEquals(NotificationDeliveryStatus.FAILED, saved.getStatus());
         assertEquals(NotificationType.EMPLOYEE_CREATED, saved.getNotificationType());
         assertEquals("unknown", saved.getRecipientEmail());
-        assertEquals("Notification payload is required", saved.getLastError());
+        assertEquals("IllegalArgumentException", saved.getLastError());
         verify(notificationService, never()).sendEmail(any(), any(), any());
     }
 
@@ -390,6 +391,102 @@ class NotificationDeliveryServiceUnitTest {
         verify(retryTaskQueue).schedule("delivery-retryable", retryable.getNextAttemptAt());
         verify(retryTaskQueue, never()).schedule("delivery-exhausted", exhausted.getNextAttemptAt());
         verify(retryTaskQueue, atLeastOnce()).schedule(org.mockito.ArgumentMatchers.eq("delivery-pending"), any(Instant.class));
+    }
+
+    @Test
+    void handleIncomingMessageWithNullRoutingKeyPersistsFailedAudit() {
+        NotificationRequest request = new NotificationRequest("Dimitrije", TEST_EMAIL, Map.of());
+
+        notificationDeliveryService.handleIncomingMessage(request, (String) null);
+
+        ArgumentCaptor<NotificationDelivery> captor = ArgumentCaptor.forClass(NotificationDelivery.class);
+        verify(notificationDeliveryTxService).persistFailedAudit(captor.capture());
+        NotificationDelivery saved = captor.getValue();
+
+        assertEquals(NotificationDeliveryStatus.FAILED, saved.getStatus());
+        assertEquals(NotificationType.UNKNOWN, saved.getNotificationType());
+        verify(notificationService, never()).sendEmail(any(), any(), any());
+    }
+
+    @Test
+    void handleIncomingMessagePersistsFailedAuditWhenContentResolutionThrows() {
+        NotificationRequest request = new NotificationRequest("Dimitrije", TEST_EMAIL, Map.of());
+        when(notificationService.resolveEmailContent(request, NotificationType.EMPLOYEE_CREATED))
+                .thenThrow(new IllegalArgumentException("template error"));
+
+        runHandleIncomingMessageInTransaction(
+                () -> notificationDeliveryService.handleIncomingMessage(request, NotificationType.EMPLOYEE_CREATED)
+        );
+
+        ArgumentCaptor<NotificationDelivery> captor = ArgumentCaptor.forClass(NotificationDelivery.class);
+        verify(notificationDeliveryTxService).persistFailedAudit(captor.capture());
+        NotificationDelivery saved = captor.getValue();
+
+        assertEquals(NotificationDeliveryStatus.FAILED, saved.getStatus());
+        assertEquals(NotificationType.EMPLOYEE_CREATED, saved.getNotificationType());
+        assertEquals("IllegalArgumentException", saved.getLastError());
+        verify(notificationService, never()).sendEmail(any(), any(), any());
+    }
+
+    @Test
+    void validateRetryConfigThrowsWhenMaxRetriesIsZero() {
+        ReflectionTestUtils.setField(notificationDeliveryService, "defaultMaxRetries", 0);
+
+        assertThrows(IllegalStateException.class,
+                () -> notificationDeliveryService.validateRetryConfig());
+    }
+
+    @Test
+    void validateRetryConfigThrowsWhenDelaySecondsIsZero() {
+        ReflectionTestUtils.setField(notificationDeliveryService, "retryDelaySeconds", 0);
+
+        assertThrows(IllegalStateException.class,
+                () -> notificationDeliveryService.validateRetryConfig());
+    }
+
+    @Test
+    void loadRetryTasksOnStartupPaginatesThroughMultiplePages() {
+        NotificationDelivery p1 = new NotificationDelivery();
+        p1.setDeliveryId("delivery-page1");
+        p1.setRetryCount(0);
+        p1.setMaxRetries(4);
+        p1.setStatus(NotificationDeliveryStatus.PENDING);
+
+        NotificationDelivery p2 = new NotificationDelivery();
+        p2.setDeliveryId("delivery-page2");
+        p2.setRetryCount(1);
+        p2.setMaxRetries(4);
+        p2.setStatus(NotificationDeliveryStatus.RETRY_SCHEDULED);
+        p2.setNextAttemptAt(Instant.parse("2026-03-11T10:00:00Z"));
+
+        org.springframework.data.domain.PageImpl<NotificationDelivery> page1 =
+                new org.springframework.data.domain.PageImpl<>(
+                        List.of(p1),
+                        org.springframework.data.domain.PageRequest.of(0, 1),
+                        2
+                );
+        org.springframework.data.domain.PageImpl<NotificationDelivery> page2 =
+                new org.springframework.data.domain.PageImpl<>(
+                        List.of(p2),
+                        org.springframework.data.domain.PageRequest.of(1, 1),
+                        2
+                );
+
+        ReflectionTestUtils.setField(notificationDeliveryService, "startupPageSize", 1);
+
+        when(notificationDeliveryTxService.findPageByStatus(
+                eq(NotificationDeliveryStatus.PENDING), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(page1)
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+        when(notificationDeliveryTxService.findPageByStatus(
+                eq(NotificationDeliveryStatus.RETRY_SCHEDULED), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(page2)
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+
+        notificationDeliveryService.loadRetryTasksOnStartup();
+
+        verify(retryTaskQueue, atLeastOnce()).schedule(eq("delivery-page1"), any(Instant.class));
+        verify(retryTaskQueue).schedule("delivery-page2", p2.getNextAttemptAt());
     }
 
     private void runHandleIncomingMessageInTransaction(Runnable action) {

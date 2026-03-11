@@ -16,8 +16,11 @@ import org.springframework.mail.javamail.JavaMailSender;
 
 import java.util.Map;
 
+import org.springframework.test.util.ReflectionTestUtils;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
@@ -93,5 +96,37 @@ class NotificationServiceUnitTest {
                 IllegalArgumentException.class,
                 () -> notificationService.resolveEmailContent(request, NotificationType.EMPLOYEE_CREATED)
         );
+    }
+
+    @Test
+    void resolveEmailContentFailsWhenUserEmailIsNull() {
+        NotificationRequest request = new NotificationRequest("Dimitrije", null, Map.of("name", "Dimitrije"));
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> notificationService.resolveEmailContent(request, NotificationType.EMPLOYEE_CREATED)
+        );
+    }
+
+    @Test
+    void sendEmailWithConfiguredFromAddressSetsFromHeader() {
+        ReflectionTestUtils.setField(notificationService, "fromAddress", "sender@example.com");
+
+        notificationService.sendEmail(TEST_EMAIL, "Subject", "Body");
+
+        ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender).send(captor.capture());
+        assertEquals("sender@example.com", captor.getValue().getFrom());
+    }
+
+    @Test
+    void sendEmailWithBlankFromAddressDoesNotSetFromHeader() {
+        ReflectionTestUtils.setField(notificationService, "fromAddress", "");
+
+        notificationService.sendEmail(TEST_EMAIL, "Subject", "Body");
+
+        ArgumentCaptor<SimpleMailMessage> captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender).send(captor.capture());
+        assertNull(captor.getValue().getFrom());
     }
 }

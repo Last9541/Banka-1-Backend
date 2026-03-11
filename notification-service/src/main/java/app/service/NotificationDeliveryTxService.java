@@ -32,6 +32,7 @@ public class NotificationDeliveryTxService {
      * @param delivery pending delivery to persist
      * @return persisted delivery entity
      */
+    @Transactional
     public NotificationDelivery createPendingDelivery(NotificationDelivery delivery) {
         return notificationDeliveryRepository.save(delivery);
     }

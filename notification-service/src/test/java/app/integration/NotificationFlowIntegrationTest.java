@@ -29,6 +29,7 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -127,6 +128,96 @@ class NotificationFlowIntegrationTest {
         assertEquals(1, messages.length);
         assertEquals("Activation Email", messages[0].getSubject());
         assertEquals(TEST_EMAIL, messages[0].getAllRecipients()[0].toString());
+    }
+
+    @Test
+    void passwordResetEventIsConsumedAndEmailSent() throws Exception {
+        NotificationRequest request = new NotificationRequest(
+                "Andrija",
+                TEST_EMAIL,
+                Map.of(
+                        "name", "Andrija",
+                        "resetLink", "https://example.com/reset/abc"
+                )
+        );
+
+        rabbitTemplate.convertAndSend(exchangeName, "employee.password_reset", request);
+
+        waitForCondition(
+                Duration.ofSeconds(15),
+                () -> !notificationDeliveryRepository.findAllByStatus(NotificationDeliveryStatus.SUCCEEDED).isEmpty()
+                        && GREEN_MAIL.getReceivedMessages().length == 1
+        );
+
+        List<NotificationDelivery> succeeded = notificationDeliveryRepository
+                .findAllByStatus(NotificationDeliveryStatus.SUCCEEDED);
+        assertEquals(1, succeeded.size());
+
+        NotificationDelivery delivery = succeeded.get(0);
+        assertEquals(NotificationType.EMPLOYEE_PASSWORD_RESET, delivery.getNotificationType());
+        assertEquals(TEST_EMAIL, delivery.getRecipientEmail());
+        assertEquals("Password Reset Email", delivery.getSubject());
+        assertNotNull(delivery.getSentAt());
+
+        MimeMessage[] messages = GREEN_MAIL.getReceivedMessages();
+        assertEquals(1, messages.length);
+        assertEquals("Password Reset Email", messages[0].getSubject());
+    }
+
+    @Test
+    void accountDeactivatedEventIsConsumedAndEmailSent() throws Exception {
+        NotificationRequest request = new NotificationRequest(
+                "Andrija",
+                TEST_EMAIL,
+                Map.of("name", "Andrija")
+        );
+
+        rabbitTemplate.convertAndSend(exchangeName, "employee.account_deactivated", request);
+
+        waitForCondition(
+                Duration.ofSeconds(15),
+                () -> !notificationDeliveryRepository.findAllByStatus(NotificationDeliveryStatus.SUCCEEDED).isEmpty()
+                        && GREEN_MAIL.getReceivedMessages().length == 1
+        );
+
+        List<NotificationDelivery> succeeded = notificationDeliveryRepository
+                .findAllByStatus(NotificationDeliveryStatus.SUCCEEDED);
+        assertEquals(1, succeeded.size());
+
+        NotificationDelivery delivery = succeeded.get(0);
+        assertEquals(NotificationType.EMPLOYEE_ACCOUNT_DEACTIVATED, delivery.getNotificationType());
+        assertEquals(TEST_EMAIL, delivery.getRecipientEmail());
+        assertEquals("Account Deactivation Email", delivery.getSubject());
+        assertNotNull(delivery.getSentAt());
+
+        MimeMessage[] messages = GREEN_MAIL.getReceivedMessages();
+        assertEquals(1, messages.length);
+        assertEquals("Account Deactivation Email", messages[0].getSubject());
+    }
+
+    @Test
+    void unknownRoutingKeyIsDroppedAndPersistedAsFailed() {
+        NotificationRequest request = new NotificationRequest(
+                "Andrija",
+                TEST_EMAIL,
+                Map.of()
+        );
+
+        rabbitTemplate.convertAndSend(exchangeName, "employee.unknown_event", request);
+
+        waitForCondition(
+                Duration.ofSeconds(15),
+                () -> !notificationDeliveryRepository.findAllByStatus(NotificationDeliveryStatus.FAILED).isEmpty()
+        );
+
+        List<NotificationDelivery> failed = notificationDeliveryRepository
+                .findAllByStatus(NotificationDeliveryStatus.FAILED);
+        assertEquals(1, failed.size());
+
+        NotificationDelivery delivery = failed.get(0);
+        assertEquals(NotificationType.UNKNOWN, delivery.getNotificationType());
+        assertTrue(delivery.getLastError().contains("employee.unknown_event"));
+        assertEquals(0, GREEN_MAIL.getReceivedMessages().length);
     }
 
     private void waitForCondition(Duration timeout, BooleanSupplier condition) {

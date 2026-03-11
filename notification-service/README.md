@@ -241,3 +241,7 @@ The module includes:
 - unit tests for payload validation, template resolution, listener delegation, and retry queue behavior
 - integration tests for the end-to-end RabbitMQ to SMTP flow
 - retry integration tests for success-after-retry and retry exhaustion scenarios
+
+## Coverage
+
+![img.png](coverage.png)
