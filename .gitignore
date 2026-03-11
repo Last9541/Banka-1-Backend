@@ -1,4 +1,4 @@
-# ── Gradle ───────────────────────────────────
+# Gradle
 /.gradle/
 /gradle/
 /gradlew
@@ -6,15 +6,15 @@
 build/
 out/
 
-# ── Maven ────────────────────────────────────
+# Maven
 target/
 
-# ── Node.js ──────────────────────────────────
+# Node.js
 node_modules/
 dist/
 .npm/
 
-# ── Python ───────────────────────────────────
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -22,22 +22,64 @@ __pycache__/
 venv/
 *.egg-info/
 
-# ── Go ───────────────────────────────────────
+# Go
 bin/
 *.exe
 
-# ── .NET ─────────────────────────────────────
+# .NET
 */bin/
 */obj/
 *.user
 *.suo
 
-# ── IDE ──────────────────────────────────────
-.idea/
-.vscode/
+# IDE - IntelliJ IDEA
+/.idea/
 *.iml
+*.iws
+*.ipr
 
-# ── Misc ─────────────────────────────────────
-*.pdf
+# IDE - VS Code
+.vscode/
+
+# IDE - Eclipse
+.classpath
+.project
+.settings/
+
+# Compiled output
+*.class
+*.jar
+*.war
+*.ear
+*.aar
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment / secrets
 .env
-.env.*
+*.env
+application-local.properties
+application-local.yml
+application-local.yaml
+
+# Test reports & coverage
+test-results/
+reports/
+.jacoco/
+*.exec
+
+# Temp files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Misc
+*.pdf
