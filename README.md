@@ -10,7 +10,7 @@
   npm install -g @redocly/cli
   ```
 - **.NET SDK** (required if any .NET microservices are present)
-- **Docker** (for Docker build validation, required once services are containerized)
+- **Docker Desktop** (includes Docker Engine, CLI, and Compose) — [download here](https://www.docker.com/products/docker-desktop/)
 
 ### Setup after cloning
 
@@ -46,10 +46,16 @@ Runs all tests across all services. Test commands are auto-detected by build sys
 
 Unit and integration tests are both placed in `src/test/java` (for JVM services).
 
-### 2. OpenAPI / Swagger Validation
+### 2. Documentation
 
-Validates all OpenAPI spec files found in service directories at these paths:
+Every microservice must have:
 
+**`README.md`** containing all three of the following sections:
+- Docker Compose usage instructions
+- `.env` / environment variable documentation
+- Endpoint and/or event examples
+
+**OpenAPI spec** at one of these paths:
 ```
 <service>/docs/openapi.yml
 <service>/docs/openapi.yaml
@@ -57,12 +63,13 @@ Validates all OpenAPI spec files found in service directories at these paths:
 <service>/src/main/resources/openapi.yaml
 ```
 
-Requires `redocly` to be installed (see Prerequisites). Empty spec files are skipped with a warning.
+Requires `redocly` to be installed (see Prerequisites). The spec is validated with `redocly lint`.
 
-To skip OpenAPI validation for a service that doesn't expose an HTTP API (e.g. a shared library), add a `.skip-openapi` marker file to its directory:
+**Skipping documentation checks** (e.g. for shared libraries that have no HTTP API, docker-compose, or environment config):
 
 ```bash
-touch <service>/.skip-openapi
+touch <service>/.skip-docs      # skips README section checks
+touch <service>/.skip-openapi   # skips OpenAPI spec requirement and validation
 ```
 
 ### 3. Docker Build Validation
@@ -77,12 +84,84 @@ If either is missing, this step is skipped with a warning.
 
 ---
 
+## Running the Project
+
+### 1. Configure environment variables
+
+Create a `.env` file at the repo root:
+
+```bash
+DB_USER=banka1
+DB_PASSWORD=banka1
+DB_NAME=banka1
+```
+
+| Variable | Description | Default |
+|---|---|---|
+| `DB_USER` | PostgreSQL username | `banka1` |
+| `DB_PASSWORD` | PostgreSQL password | `banka1` |
+| `DB_NAME` | PostgreSQL database name | `banka1` |
+
+> Never commit `.env`. It is listed in `.gitignore`.
+
+### 2. Start the stack
+
+```bash
+docker compose up -d
+```
+
+To stop:
+
+```bash
+docker compose down
+```
+
+To stop and remove all data volumes:
+
+```bash
+docker compose down -v
+```
+
+---
+
 ## Adding a New Microservice
 
 1. Create a directory at the repo root (e.g. `user-service/`).
 2. Add a `Dockerfile` inside it.
-3. Add the service to `docker-compose.yml` at the repo root.
-4. Place tests in the standard location for your build system.
-5. Add an OpenAPI spec at `<service>/docs/openapi.yml` if the service exposes an HTTP API.
+3. Add the service to `docker-compose.yml` — uncomment the existing TODO block for your service, or add a new entry following this pattern:
 
-The pre-push hook will automatically pick up the new service.
+```yaml
+your-service:
+  build:
+    context: ./your-service
+    dockerfile: Dockerfile
+  container_name: banka1-your-service
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+  ports:
+    - "808X:808X"
+  env_file:
+    - ./your-service/.env
+  # image: ${REGISTRY_URL}/your-service:latest  # uncomment once registry is set up
+```
+
+4. Add a `your-service/.env` file with the service's environment variables. At minimum include the database connection:
+
+```env
+DB_USER=banka1
+DB_PASSWORD=banka1
+DB_NAME=banka1
+DB_HOST=postgres
+DB_PORT=5432
+```
+
+5. Place tests in the standard location for your build system.
+6. Add an OpenAPI spec at `<service>/docs/openapi.yml`.
+7. Add a `README.md` inside the service directory with:
+   - How to run it with `docker-compose`
+   - All required `.env` variables with descriptions
+   - Examples of exposed endpoints or consumed/produced events
+
+The pre-push hook and CI pipeline will automatically pick up the new service and enforce all of the above.

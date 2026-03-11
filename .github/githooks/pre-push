@@ -10,6 +10,18 @@ echo "========================================="
 
 # ── HELPERS ──────────────────────────────────
 
+# Returns 0 if the directory contains a recognizable service build system
+is_service_dir() {
+  SERVICE_DIR="$1"
+  HAS_DOTNET=0
+  { ls "$SERVICE_DIR"/*.sln >/dev/null 2>&1 || ls "$SERVICE_DIR"/*.csproj >/dev/null 2>&1; } && HAS_DOTNET=1
+
+  [ -f "$SERVICE_DIR/build.gradle" ] || [ -f "$SERVICE_DIR/gradlew" ] || \
+  [ -f "$SERVICE_DIR/pom.xml" ] || [ -f "$SERVICE_DIR/package.json" ] || \
+  [ -f "$SERVICE_DIR/go.mod" ] || [ -f "$SERVICE_DIR/requirements.txt" ] || \
+  [ -f "$SERVICE_DIR/pyproject.toml" ] || [ "$HAS_DOTNET" -eq 1 ]
+}
+
 run_tests_for_service() {
   SERVICE_DIR="$1"
   SERVICE_NAME=$(basename "$SERVICE_DIR")
@@ -30,12 +42,53 @@ run_tests_for_service() {
   fi
 }
 
+validate_readme_for_service() {
+  SERVICE_DIR="$1"
+  SERVICE_NAME=$(basename "$SERVICE_DIR")
+  README="$SERVICE_DIR/README.md"
+  FAILED=0
+
+  if [ -f "$SERVICE_DIR/.skip-docs" ]; then
+    echo "  -> Docs skipped: $SERVICE_NAME (.skip-docs)"
+    return 0
+  fi
+
+  if [ ! -f "$README" ]; then
+    echo "  [FAIL] $SERVICE_NAME: README.md is missing."
+    echo "         Every service must have a README.md with:"
+    echo "           - Docker Compose usage instructions"
+    echo "           - .env configuration"
+    echo "           - Endpoint and/or event examples"
+    return 1
+  fi
+
+  # Check for required sections (case-insensitive)
+  grep -qi "docker.compose\|docker compose" "$README" || {
+    echo "  [FAIL] $SERVICE_NAME/README.md: missing Docker Compose instructions."
+    FAILED=1
+  }
+  grep -qi "\.env\|environment variable" "$README" || {
+    echo "  [FAIL] $SERVICE_NAME/README.md: missing .env / environment variable documentation."
+    FAILED=1
+  }
+  grep -qi "endpoint\|event\|api" "$README" || {
+    echo "  [FAIL] $SERVICE_NAME/README.md: missing endpoint or event examples."
+    FAILED=1
+  }
+
+  return $FAILED
+}
+
 validate_openapi_for_service() {
   SERVICE_DIR="$1"
   SERVICE_NAME=$(basename "$SERVICE_DIR")
 
-  [ -f "$SERVICE_DIR/.skip-openapi" ] && { echo "  -> Skipping: $SERVICE_NAME (.skip-openapi)"; return 0; }
+  if [ -f "$SERVICE_DIR/.skip-openapi" ]; then
+    echo "  -> OpenAPI skipped: $SERVICE_NAME (.skip-openapi)"
+    return 0
+  fi
 
+  SPEC_FOUND=0
   for SPEC in \
     "$SERVICE_DIR/docs/openapi.yml" \
     "$SERVICE_DIR/docs/openapi.yaml" \
@@ -43,12 +96,23 @@ validate_openapi_for_service() {
     "$SERVICE_DIR/src/main/resources/openapi.yaml"; do
 
     [ -f "$SPEC" ] || continue
-    # Skip empty files
-    [ -s "$SPEC" ] || { echo "  [WARN] OpenAPI spec is empty, skipping: $SPEC"; continue; }
 
-    echo "  -> Validating: $SPEC"
+    if [ ! -s "$SPEC" ]; then
+      echo "  [WARN] OpenAPI spec is empty, skipping: $SPEC"
+      continue
+    fi
+
+    SPEC_FOUND=1
+    echo "  -> Validating OpenAPI: $SPEC"
     redocly lint "$SPEC" || { echo "  [FAIL] OpenAPI validation failed: $SPEC"; return 1; }
   done
+
+  if [ "$SPEC_FOUND" -eq 0 ]; then
+    echo "  [FAIL] $SERVICE_NAME: no OpenAPI spec found."
+    echo "         Add one at docs/openapi.yml or src/main/resources/openapi.yml"
+    echo "         If this service has no HTTP API, add a .skip-openapi file."
+    return 1
+  fi
 }
 
 # ── 1. TESTS ─────────────────────────────────
@@ -61,7 +125,7 @@ if [ -f "$REPO_ROOT/gradlew" ] && [ -f "$REPO_ROOT/settings.gradle" ]; then
     || { echo ""; echo "[FAIL] Tests failed. Push aborted."; exit 1; }
 fi
 
-# Per-service directories that are NOT Gradle subprojects (Node, Python, Go, Maven)
+# Per-service directories that are NOT Gradle subprojects (Node, Python, Go, Maven, .NET)
 if [ -f "$REPO_ROOT/settings.gradle" ]; then
   GRADLE_SUBPROJECTS=$(grep "^include" "$REPO_ROOT/settings.gradle" | sed "s/include '//g;s/'//g;s/ //g" | tr '\n' ' ')
 else
@@ -70,20 +134,8 @@ fi
 
 for SERVICE_DIR in "$REPO_ROOT"/*/; do
   SERVICE_NAME=$(basename "$SERVICE_DIR")
-
-  # Skip if it's a Gradle subproject (already covered above)
   echo "$GRADLE_SUBPROJECTS" | grep -qw "$SERVICE_NAME" && continue
-
-  # Skip if no recognizable build system
-  HAS_DOTNET=0
-  { ls "$SERVICE_DIR"/*.sln >/dev/null 2>&1 || ls "$SERVICE_DIR"/*.csproj >/dev/null 2>&1; } && HAS_DOTNET=1
-
-  if [ ! -f "$SERVICE_DIR/pom.xml" ] && [ ! -f "$SERVICE_DIR/package.json" ] && \
-     [ ! -f "$SERVICE_DIR/go.mod" ] && [ ! -f "$SERVICE_DIR/requirements.txt" ] && \
-     [ ! -f "$SERVICE_DIR/pyproject.toml" ] && [ ! -f "$SERVICE_DIR/gradlew" ] && \
-     [ "$HAS_DOTNET" -eq 0 ]; then
-    continue
-  fi
+  is_service_dir "$SERVICE_DIR" || continue
 
   run_tests_for_service "$SERVICE_DIR" \
     || { echo ""; echo "[FAIL] Tests failed in $SERVICE_NAME. Push aborted."; exit 1; }
@@ -91,27 +143,31 @@ done
 
 echo "[1/3] Tests passed."
 
-# ── 2. OPENAPI VALIDATION ─────────────────────
+# ── 2. DOCUMENTATION ──────────────────────────
 echo ""
-echo "[2/3] Validating OpenAPI/Swagger specs..."
+echo "[2/3] Validating documentation..."
+DOC_FAILED=0
 
-if ! command -v redocly >/dev/null 2>&1; then
-  echo "  [WARN] redocly not found, skipping OpenAPI validation."
-  echo "         Install with: npm install -g @redocly/cli"
-else
-  OPENAPI_FAILED=0
-  for SERVICE_DIR in "$REPO_ROOT"/*/; do
-    validate_openapi_for_service "$SERVICE_DIR" || OPENAPI_FAILED=1
-  done
+for SERVICE_DIR in "$REPO_ROOT"/*/; do
+  is_service_dir "$SERVICE_DIR" || continue
 
-  if [ "$OPENAPI_FAILED" -ne 0 ]; then
-    echo ""
-    echo "[FAIL] OpenAPI validation failed. Push aborted."
-    exit 1
+  validate_readme_for_service "$SERVICE_DIR"  || DOC_FAILED=1
+
+  if command -v redocly >/dev/null 2>&1; then
+    validate_openapi_for_service "$SERVICE_DIR" || DOC_FAILED=1
+  else
+    echo "  [WARN] redocly not found, skipping OpenAPI validation."
+    echo "         Install with: npm install -g @redocly/cli"
   fi
+done
 
-  echo "[2/3] OpenAPI validation passed."
+if [ "$DOC_FAILED" -ne 0 ]; then
+  echo ""
+  echo "[FAIL] Documentation validation failed. Push aborted."
+  exit 1
 fi
+
+echo "[2/3] Documentation validated."
 
 # ── 3. DOCKER BUILD ───────────────────────────
 echo ""
