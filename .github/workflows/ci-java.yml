@@ -8,14 +8,16 @@ on:
     branches: [main, dev]
     paths:
       - 'company-observability-starter/**'
-      # TODO: - 'user-service/**'
-      # TODO: - 'notification-service/**'
+      - 'user-service/**'
+      - 'security-lib/**'
+      - 'notification-service/**'
   pull_request:
     branches: [main, dev]
     paths:
       - 'company-observability-starter/**'
-      # TODO: - 'user-service/**'
-      # TODO: - 'notification-service/**'
+      - 'user-service/**'
+      - 'notification-service/**'
+      - 'security-lib/**'
 
 jobs:
 
