@@ -72,24 +72,24 @@ jobs:
       - name: Lint
         run: |
           SERVICE="${{ matrix.service }}"
-          ./gradlew ":${SERVICE}:checkstyleMain" ":${SERVICE}:checkstyleTest" --no-daemon --warning-mode none --console plain
+          gradle ":${SERVICE}:checkstyleMain" ":${SERVICE}:checkstyleTest" --no-daemon --warning-mode none --console plain
 
       - name: Build
         run: |
           SERVICE="${{ matrix.service }}"
-          ./gradlew ":${SERVICE}:build" -x test --no-daemon --warning-mode none --console plain
+          gradle ":${SERVICE}:build" -x test --no-daemon --warning-mode none --console plain
 
       - name: Test
         run: |
           SERVICE="${{ matrix.service }}"
-          ./gradlew ":${SERVICE}:test" --no-daemon --warning-mode none --console plain
+          gradle ":${SERVICE}:test" --no-daemon --warning-mode none --console plain
 
       - name: Generate JaCoCo report (if available)
         if: always()
         run: |
           SERVICE="${{ matrix.service }}"
-          if ./gradlew ":${SERVICE}:tasks" --all --console plain | grep -q "jacocoTestReport"; then
-            ./gradlew ":${SERVICE}:jacocoTestReport" --no-daemon --warning-mode none --console plain
+          if gradle ":${SERVICE}:tasks" --all --console plain | grep -q "jacocoTestReport"; then
+            gradle ":${SERVICE}:jacocoTestReport" --no-daemon --warning-mode none --console plain
           else
             echo "No jacocoTestReport task for ${SERVICE}; skipping coverage report generation."
           fi
