@@ -90,9 +90,9 @@ class ClientControllerWebMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.ime").exists())
-                .andExpect(jsonPath("$.errors.email").exists())
-                .andExpect(jsonPath("$.errors.jmbg").exists());
+                .andExpect(jsonPath("$.validationErrors.ime").exists())
+                .andExpect(jsonPath("$.validationErrors.email").exists())
+                .andExpect(jsonPath("$.validationErrors.jmbg").exists());
     }
 
     @Test
@@ -104,12 +104,13 @@ class ClientControllerWebMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.jmbg").exists());
+                .andExpect(jsonPath("$.validationErrors.jmbg").exists());
     }
 
     @Test
     void updateClientReturnsOkForValidPayload() throws Exception {
         ClientUpdateRequestDto request = new ClientUpdateRequestDto();
+        request.setIme("Petar");
         request.setPrezime("NovoPrezime");
 
         when(clientService.updateClient(eq(1L), any(ClientUpdateRequestDto.class))).thenReturn(sampleResponse());
@@ -130,12 +131,13 @@ class ClientControllerWebMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.email").exists());
+                .andExpect(jsonPath("$.validationErrors.email").exists());
     }
 
     @Test
     void updateClientReturnsNotFoundWhenClientMissing() throws Exception {
         ClientUpdateRequestDto request = new ClientUpdateRequestDto();
+        request.setIme("Petar");
         request.setPrezime("X");
 
         when(clientService.updateClient(eq(99L), any(ClientUpdateRequestDto.class)))
@@ -145,7 +147,7 @@ class ClientControllerWebMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").exists());
+                .andExpect(jsonPath("$.errorCode").exists());
     }
 
     @Test
@@ -163,7 +165,7 @@ class ClientControllerWebMvcTest {
 
         mockMvc.perform(delete("/customers/99"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").exists());
+                .andExpect(jsonPath("$.errorCode").exists());
     }
 
     @Test
@@ -194,7 +196,7 @@ class ClientControllerWebMvcTest {
 
         mockMvc.perform(get("/customers/jmbg/9999999999999"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").exists());
+                .andExpect(jsonPath("$.errorCode").exists());
     }
 
     private ClientResponseDto sampleResponse() {

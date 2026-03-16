@@ -27,28 +27,12 @@ public interface KlijentRepository extends JpaRepository<Klijent, Long> {
     Optional<Klijent> findByEmail(String email);
 
     /**
-     * Proverava da li klijent sa zadatom email adresom vec postoji.
-     *
-     * @param email email adresa za proveru
-     * @return {@code true} ako adresa vec postoji
-     */
-    boolean existsByEmail(String email);
-
-    /**
      * Pronalazi klijenta po JMBG-u.
      *
      * @param jmbg JMBG klijenta
      * @return opcioni klijent ako postoji
      */
     Optional<Klijent> findByJmbg(String jmbg);
-
-    /**
-     * Proverava da li klijent sa zadatim JMBG-om vec postoji.
-     *
-     * @param jmbg JMBG za proveru
-     * @return {@code true} ako JMBG vec postoji
-     */
-    boolean existsByJmbg(String jmbg);
 
     /**
      * Pretrazuje klijente po kombinaciji filtera sa paginacijom.

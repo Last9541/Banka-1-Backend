@@ -14,6 +14,17 @@ services:
       - clients_postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: banka_clients_rabbitmq
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: rabbit
+      RABBITMQ_DEFAULT_PASS: rabbit
+    restart: unless-stopped
+
   client-service:
     build:
       context: ..
@@ -25,8 +36,10 @@ services:
       - .env
     environment:
       DB_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
     depends_on:
       - postgres
+      - rabbitmq
     restart: on-failure
 
 volumes:

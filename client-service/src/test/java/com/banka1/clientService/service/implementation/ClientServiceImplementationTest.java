@@ -9,7 +9,10 @@ import com.banka1.clientService.dto.responses.ClientResponseDto;
 import com.banka1.clientService.exception.BusinessException;
 import com.banka1.clientService.exception.ErrorCode;
 import com.banka1.clientService.mappers.ClientMapper;
+import com.banka1.clientService.rabbitMQ.RabbitClient;
 import com.banka1.clientService.repository.KlijentRepository;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -18,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.Optional;
@@ -39,37 +43,23 @@ class ClientServiceImplementationTest {
     @Mock
     private ClientMapper clientMapper;
 
+    @Mock
+    private RabbitClient rabbitClient;
+
     @InjectMocks
     private ClientServiceImplementation clientService;
 
+    @BeforeEach
+    void initTransactionSync() {
+        TransactionSynchronizationManager.initSynchronization();
+    }
+
+    @AfterEach
+    void clearTransactionSync() {
+        TransactionSynchronizationManager.clearSynchronization();
+    }
+
     // ── createClient ─────────────────────────────────────────────────────────
-
-    @Test
-    void createClientThrowsWhenEmailAlreadyExists() {
-        ClientCreateRequestDto dto = createRequest();
-        when(klijentRepository.existsByEmail("marko@banka.com")).thenReturn(true);
-
-        assertThatThrownBy(() -> clientService.createClient(dto))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.EMAIL_ALREADY_EXISTS);
-
-        verify(klijentRepository, never()).save(any());
-    }
-
-    @Test
-    void createClientThrowsWhenJmbgAlreadyExists() {
-        ClientCreateRequestDto dto = createRequest();
-        when(klijentRepository.existsByEmail("marko@banka.com")).thenReturn(false);
-        when(klijentRepository.existsByJmbg("1234567890123")).thenReturn(true);
-
-        assertThatThrownBy(() -> clientService.createClient(dto))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.JMBG_ALREADY_EXISTS);
-
-        verify(klijentRepository, never()).save(any());
-    }
 
     @Test
     void createClientSuccessfullyCreatesAndReturnsDto() {
@@ -79,8 +69,6 @@ class ClientServiceImplementationTest {
         saved.setId(42L);
         ClientResponseDto responseDto = responseDto(42L, "Marko", "Markovic", "marko@banka.com");
 
-        when(klijentRepository.existsByEmail("marko@banka.com")).thenReturn(false);
-        when(klijentRepository.existsByJmbg("1234567890123")).thenReturn(false);
         when(clientMapper.toEntity(dto)).thenReturn(entity);
         when(klijentRepository.save(entity)).thenReturn(saved);
         when(clientMapper.toDto(saved)).thenReturn(responseDto);
@@ -90,6 +78,26 @@ class ClientServiceImplementationTest {
         assertThat(result.getId()).isEqualTo(42L);
         assertThat(result.getEmail()).isEqualTo("marko@banka.com");
         verify(klijentRepository).save(entity);
+    }
+
+    @Test
+    void createClientRegistersAfterCommitNotification() {
+        ClientCreateRequestDto dto = createRequest();
+        Klijent entity = klijent("marko@banka.com", "1234567890123");
+        Klijent saved = klijent("marko@banka.com", "1234567890123");
+        saved.setId(1L);
+
+        when(clientMapper.toEntity(dto)).thenReturn(entity);
+        when(klijentRepository.save(entity)).thenReturn(saved);
+        when(clientMapper.toDto(saved)).thenReturn(responseDto(1L, "Marko", "Markovic", "marko@banka.com"));
+
+        clientService.createClient(dto);
+
+        // Synchronization callbacks are registered; trigger afterCommit manually to verify rabbit call
+        TransactionSynchronizationManager.getSynchronizations()
+                .forEach(sync -> sync.afterCommit());
+
+        verify(rabbitClient).sendEmailNotification(any());
     }
 
     // ── searchClients ────────────────────────────────────────────────────────
@@ -109,6 +117,18 @@ class ClientServiceImplementationTest {
         assertThat(result.getContent()).hasSize(1);
         assertThat(result.getContent().getFirst().getEmail()).isEqualTo("marko@banka.com");
         verify(klijentRepository).searchClients("", "", "", pageable);
+    }
+
+    @Test
+    void searchClientsWithNonNullEmailPassesEscapedEmailToRepository() {
+        PageRequest pageable = PageRequest.of(0, 10);
+
+        when(klijentRepository.searchClients("", "", "test\\%", pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        clientService.searchClients(null, null, "test%", pageable);
+
+        verify(klijentRepository).searchClients(eq(""), eq(""), eq("test\\%"), eq(pageable));
     }
 
     @Test
@@ -167,24 +187,6 @@ class ClientServiceImplementationTest {
     }
 
     @Test
-    void updateClientThrowsWhenNewEmailAlreadyTakenByAnotherClient() {
-        Klijent existing = klijent("marko@banka.com", "1234567890123");
-        existing.setId(1L);
-        ClientUpdateRequestDto dto = new ClientUpdateRequestDto();
-        dto.setEmail("taken@banka.com");
-
-        when(klijentRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(klijentRepository.existsByEmail("taken@banka.com")).thenReturn(true);
-
-        assertThatThrownBy(() -> clientService.updateClient(1L, dto))
-                .isInstanceOf(BusinessException.class)
-                .extracting(e -> ((BusinessException) e).getErrorCode())
-                .isEqualTo(ErrorCode.EMAIL_ALREADY_EXISTS);
-
-        verify(klijentRepository, never()).save(any());
-    }
-
-    @Test
     void updateClientSuccessfullyUpdatesFields() {
         Klijent existing = klijent("marko@banka.com", "1234567890123");
         existing.setId(1L);
@@ -194,14 +196,14 @@ class ClientServiceImplementationTest {
         ClientResponseDto responseDto = responseDto(1L, "Marko", "Novakovic", "marko@banka.com");
 
         when(klijentRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(klijentRepository.save(existing)).thenReturn(existing);
+        when(klijentRepository.saveAndFlush(existing)).thenReturn(existing);
         when(clientMapper.toDto(existing)).thenReturn(responseDto);
 
         ClientResponseDto result = clientService.updateClient(1L, dto);
 
         assertThat(result.getPrezime()).isEqualTo("Novakovic");
         verify(clientMapper).updateEntityFromDto(existing, dto);
-        verify(klijentRepository).save(existing);
+        verify(klijentRepository).saveAndFlush(existing);
     }
 
     @Test
@@ -218,7 +220,7 @@ class ClientServiceImplementationTest {
         ClientResponseDto responseDto = responseDto(1L, "Marko", "Markovic", "marko@banka.com");
 
         when(klijentRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(klijentRepository.save(existing)).thenReturn(existing);
+        when(klijentRepository.saveAndFlush(existing)).thenReturn(existing);
         when(clientMapper.toDto(existing)).thenReturn(responseDto);
 
         clientService.updateClient(1L, dto);
@@ -226,23 +228,6 @@ class ClientServiceImplementationTest {
         // The real mapper never touches jmbg or password – assert the entity still holds original values
         assertThat(existing.getJmbg()).isEqualTo(originalJmbg);
         assertThat(existing.getPassword()).isEqualTo(originalPassword);
-    }
-
-    @Test
-    void updateClientDoesNotCheckEmailUniquenessWhenEmailUnchanged() {
-        Klijent existing = klijent("marko@banka.com", "1234567890123");
-        existing.setId(1L);
-        ClientUpdateRequestDto dto = new ClientUpdateRequestDto();
-        dto.setEmail("marko@banka.com"); // same email as current
-        ClientResponseDto responseDto = responseDto(1L, "Marko", "Markovic", "marko@banka.com");
-
-        when(klijentRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(klijentRepository.save(existing)).thenReturn(existing);
-        when(clientMapper.toDto(existing)).thenReturn(responseDto);
-
-        clientService.updateClient(1L, dto);
-
-        verify(klijentRepository, never()).existsByEmail(any());
     }
 
     // ── deleteClient ─────────────────────────────────────────────────────────

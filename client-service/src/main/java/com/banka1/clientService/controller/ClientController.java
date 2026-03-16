@@ -90,8 +90,8 @@ public class ClientController {
     public ResponseEntity<Page<ClientResponseDto>> globalSearchClients(
             @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) String query,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "10") @Min(1) @Max(100) int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
         return ResponseEntity.ok(clientService.globalSearchClients(query, pageable));

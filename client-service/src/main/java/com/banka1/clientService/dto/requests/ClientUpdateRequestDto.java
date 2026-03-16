@@ -2,26 +2,26 @@ package com.banka1.clientService.dto.requests;
 
 import com.banka1.clientService.domain.enums.Pol;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 
 /**
  * DTO koji zaposleni koristi za azuriranje podataka klijenta.
- * Sva polja su opciona – klijent moze slati samo polja koja zeli da promeni.
+ * Ime i prezime su obavezna polja; ostala polja su opciona.
  * Password i JMBG se ne mogu menjati.
  */
 @Getter
 @Setter
 public class ClientUpdateRequestDto {
 
-    /** Novo ime klijenta (mora imati bar jedan karakter). */
-    @Size(min = 1)
+    /** Novo ime klijenta (ne sme biti prazan ili whitespace string). */
+    @NotBlank
     private String ime;
 
-    /** Novo prezime klijenta (mora imati bar jedan karakter). */
-    @Size(min = 1)
+    /** Novo prezime klijenta (ne sme biti prazan ili whitespace string). */
+    @NotBlank
     private String prezime;
 
     /** Novi datum rodjenja klijenta kao Unix timestamp. */

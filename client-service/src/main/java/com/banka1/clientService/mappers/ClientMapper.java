@@ -65,8 +65,8 @@ public class ClientMapper {
         if (dto.getPrezime() != null) klijent.setPrezime(dto.getPrezime());
         if (dto.getDatumRodjenja() != null) klijent.setDatumRodjenja(dto.getDatumRodjenja());
         if (dto.getPol() != null) klijent.setPol(dto.getPol());
+        if (dto.getEmail() != null) klijent.setEmail(dto.getEmail());
         if (dto.getBrojTelefona() != null) klijent.setBrojTelefona(dto.getBrojTelefona());
         if (dto.getAdresa() != null) klijent.setAdresa(dto.getAdresa());
-        // email se postavlja posebno u servisu jer zahteva proveru jedinstvenosti
     }
 }
