@@ -25,6 +25,9 @@ public final class DefaultNotificationTemplateFactory implements NotificationTem
     public DefaultNotificationTemplateFactory(Environment environment) {
         this.templates = loadTemplates(environment);
     }
+    public DefaultNotificationTemplateFactory(Map<String, EmailTemplate> templates) {
+        this.templates = templates;
+    }
 
     private Map<String, EmailTemplate> loadTemplates(Environment environment) {
         Map<String, EmailTemplate> map = new HashMap<>();
