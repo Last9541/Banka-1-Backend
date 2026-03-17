@@ -6,12 +6,13 @@ info:
 servers:
 - url: http://localhost:8083
 security:
-- Bearer Authentication: []
+- BearerAuthentication: []
 paths:
   /customers/{id}:
     put:
       tags:
       - client-controller
+      summary: Azurira podatke klijenta
       operationId: updateClient
       parameters:
       - name: id
@@ -36,6 +37,7 @@ paths:
     delete:
       tags:
       - client-controller
+      summary: Brise klijenta
       operationId: deleteClient
       parameters:
       - name: id
@@ -51,6 +53,7 @@ paths:
     get:
       tags:
       - client-controller
+      summary: Pretrazuje klijente po filterima
       operationId: searchClients
       parameters:
       - name: ime
@@ -95,6 +98,7 @@ paths:
     post:
       tags:
       - client-controller
+      summary: Kreira novog klijenta
       operationId: createClient
       requestBody:
         content:
@@ -113,6 +117,7 @@ paths:
     get:
       tags:
       - client-controller
+      summary: Globalna pretraga klijenata
       operationId: globalSearchClients
       parameters:
       - name: query
@@ -148,6 +153,7 @@ paths:
     get:
       tags:
       - client-controller
+      summary: Vraca ID klijenta po JMBG-u
       operationId: getIdByJmbg
       parameters:
       - name: jmbg
