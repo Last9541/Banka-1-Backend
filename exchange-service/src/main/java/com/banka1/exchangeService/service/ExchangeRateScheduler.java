@@ -3,6 +3,7 @@ package com.banka1.exchangeService.service;
 import com.banka1.exchangeService.config.ExchangeRateProperties;
 import com.banka1.exchangeService.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -40,7 +41,7 @@ public class ExchangeRateScheduler {
         log.info("Fetching exchange rates on startup.");
         try {
             exchangeRateService.fetchAndStoreDailyRates();
-        } catch (BusinessException ex) {
+        } catch (BusinessException | DataIntegrityViolationException ex) {
             log.error("Startup exchange-rate fetch failed — service will start without rates. Cause: {}", ex.getMessage());
         }
     }

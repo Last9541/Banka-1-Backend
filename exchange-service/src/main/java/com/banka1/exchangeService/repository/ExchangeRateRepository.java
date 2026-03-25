@@ -2,7 +2,9 @@ package com.banka1.exchangeService.repository;
 
 import com.banka1.exchangeService.domain.ExchangeRateEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -31,11 +33,13 @@ public interface ExchangeRateRepository extends JpaRepository<ExchangeRateEntity
     List<ExchangeRateEntity> findAllByDateOrderByCurrencyCodeAsc(LocalDate date);
 
     /**
-     * Brise ceo snapshot za zadati datum.
+     * Brise ceo snapshot za zadati datum direktnim JPQL DELETE-om.
      *
      * @param date datum snapshot-a koji treba zameniti
      */
-    void deleteByDate(LocalDate date);
+    @Modifying
+    @Query("DELETE FROM ExchangeRateEntity e WHERE e.date = :date")
+    void deleteByDate(@Param("date") LocalDate date);
 
     /**
      * Vraca poslednji datum za koji postoji bilo koji kurs.
