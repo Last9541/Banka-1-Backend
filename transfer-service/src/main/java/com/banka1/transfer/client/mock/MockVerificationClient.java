@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 @Profile("local")
 public class MockVerificationClient implements VerificationClient {
     @Override
-    public VerificationResponseDto validateCode(String sessionId, String code) {
+    public VerificationResponseDto validateCode(Long sessionId, String code) {
         log.info("MOCK: Validating code {} for session {}", code, sessionId);
         // Simuliramo da je svaki kod "123456" ispravan
         boolean isValid = "123456".equals(code);

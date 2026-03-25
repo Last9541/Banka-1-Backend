@@ -3,6 +3,7 @@ package com.banka1.transfer.dto.requests;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 import java.math.BigDecimal;
 
@@ -22,8 +23,9 @@ public class TransferRequestDto {
     private BigDecimal amount;
 
     @NotBlank
+    @Pattern(regexp = "^\\d{6}$", message = "verificationCode must be a 6-digit number.")
     private String verificationCode;  // 2FA kod dobijen putem emaila/SMS-a
 
-    @NotBlank
-    private String verificationSessionId; // ID sesije vezan za 2FA kod
+    @NotNull
+    private Long verificationSessionId; // ID sesije vezan za 2FA kod
 }

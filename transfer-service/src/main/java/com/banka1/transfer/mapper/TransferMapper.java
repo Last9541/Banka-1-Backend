@@ -36,7 +36,7 @@ public class TransferMapper {
                 .finalAmount(finalAmount)
                 .exchangeRate(exchangeRate)
                 .commission(commission)
-                .verificationSessionId(request.getVerificationSessionId()) // NOVO
+                .verificationSessionId(request.getVerificationSessionId().toString())
                 .timestamp(Instant.now())
                 .build();
     }

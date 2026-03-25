@@ -11,5 +11,5 @@ public interface VerificationClient {
      * @param code kod unet od strane korisnika
      * @return DTO sa statusom verifikacije i preostalim pokušajima
      */
-    VerificationResponseDto validateCode(String sessionId, String code);
+    VerificationResponseDto validateCode(Long sessionId, String code);
 }

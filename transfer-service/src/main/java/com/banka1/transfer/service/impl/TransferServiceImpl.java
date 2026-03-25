@@ -61,12 +61,12 @@ public class TransferServiceImpl implements TransferService {
     public TransferResponseDto executeTransfer(TransferRequestDto request) {
         String fromAccountNumber = request.getFromAccountNumber();
         String toAccountNumber = request.getToAccountNumber();
-        String verificationSessionId = request.getVerificationSessionId();
+        Long verificationSessionId = request.getVerificationSessionId();
 
         log.info("Processing transfer request from {}", fromAccountNumber);
 
         // Idempotency Check
-        if (transferRepository.existsByVerificationSessionId(verificationSessionId)) {
+        if (transferRepository.existsByVerificationSessionId(verificationSessionId.toString())) {
             throw new BusinessException(ErrorCode.TRANSFER_ALREADY_PROCESSED, "Ovaj transfer je već realizovan.");
         }
 
