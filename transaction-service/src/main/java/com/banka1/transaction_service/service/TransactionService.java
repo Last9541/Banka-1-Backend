@@ -15,5 +15,6 @@ public interface TransactionService {
     String newPayment(Jwt jwt, NewPaymentDto newPaymentDto);
     Page<TransactionResponseDto> findAllTransactions(Jwt jwt, String accountNumber, int page, int size);
     Page<TransactionResponseDto> findPayments(Jwt jwt, String accountNumber, TransactionStatus transactionStatus, LocalDateTime fromDate, LocalDateTime toDate, BigDecimal initialAmountMin, BigDecimal initialAmountMax, BigDecimal finalAmountMin, BigDecimal finalAmountMax, int page, int size);
+    Page<TransactionResponseDto> findAllTransactionsForEmployee(String accountNumber, int page, int size);
 
 }

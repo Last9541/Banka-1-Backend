@@ -111,6 +111,13 @@ public class TransactionServiceImplementation implements TransactionService {
     }
 
 
+    @Transactional
+    @Override
+    public Page<TransactionResponseDto> findAllTransactionsForEmployee(String accountNumber, int page, int size) {
+        return paymentRepository.findByAccountNumber(accountNumber, PageRequest.of(page, size))
+                .map(TransactionResponseDto::new);
+    }
+
     //todo za sad ovo ostavljam ovde, validacije bi trebalo da budu zaseban servis, if-ove sam ostavio just in case
     //TODO menjati exceptione
 
