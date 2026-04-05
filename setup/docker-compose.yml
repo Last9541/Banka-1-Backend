@@ -183,6 +183,29 @@ services:
       timeout: 5s
       retries: 10
 
+  # Postgres for Order Service
+  postgres_order:
+    image: postgres:16
+    container_name: postgres_order_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${ORDER_DB_NAME:-orderdb}
+      POSTGRES_USER: ${ORDER_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-postgres}
+    ports:
+      - "${ORDER_DB_EX_PORT:-5441}:5432"
+    volumes:
+      - postgres-order-data:/var/lib/postgresql/data
+    networks:
+      - banka-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORDER_DB_USER:-postgres} -d ${ORDER_DB_NAME:-orderdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   # RabbitMQ (shared)
   rabbitmq:
     image: rabbitmq:3-management
@@ -272,6 +295,7 @@ services:
       - exchange-service-logs:/var/log/services/exchange:ro
       - verification-service-logs:/var/log/services/verification:ro
       - transaction-service-logs:/var/log/services/transaction:ro
+      - order-service-logs:/var/log/services/order:ro
     depends_on:
       - loki
     networks:
@@ -790,6 +814,70 @@ services:
       retries: 10
       start_period: 30s
 
+  # Order Service
+  order-service:
+    build:
+      context: ..
+      dockerfile: order-service/Dockerfile
+      args:
+        SERVER_PORT: ${ORDER_SERVER_PORT:-8088}
+    container_name: banka_order_service
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ORDER_SERVER_PORT: ${ORDER_SERVER_PORT:-8088}
+      ORDER_DB_HOST: postgres_order
+      ORDER_DB_PORT: 5432
+      ORDER_DB_NAME: ${ORDER_DB_NAME:-orderdb}
+      ORDER_DB_USER: ${ORDER_DB_USER:-postgres}
+      ORDER_DB_PASSWORD: ${ORDER_DB_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET}
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      NOTIFICATION_QUEUE: ${NOTIFICATION_QUEUE:-notification-service-queue}
+      NOTIFICATION_EXCHANGE: ${NOTIFICATION_EXCHANGE:-employee.events}
+      NOTIFICATION_ROUTING_KEY: ${NOTIFICATION_ROUTING_KEY:-employee.#}
+      ACCOUNT_SERVICE_HOST: account-service
+      ACCOUNT_SERVER_PORT: ${ACCOUNT_SERVER_PORT:-8084}
+      EMPLOYEE_SERVICE_HOST: employee-service
+      USER_SERVER_PORT: ${USER_SERVER_PORT:-8081}
+      CLIENT_SERVICE_HOST: client-service
+      CLIENT_SERVER_PORT: ${CLIENT_SERVER_PORT:-8083}
+      EXCHANGE_SERVICE_HOST: exchange-service
+      EXCHANGE_SERVER_PORT: ${EXCHANGE_SERVER_PORT:-8085}
+      STOCK_SERVICE_HOST: stock-service
+      STOCK_SERVICE_PORT: ${STOCK_SERVICE_PORT:-8090}
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://otel-collector:4318/v1/metrics
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_SERVICE_NAME: order-service
+      LOGGING_FILE_PATH: /var/log/banka
+    depends_on:
+      postgres_order:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    expose:
+      - "${ORDER_SERVER_PORT:-8088}"
+    networks:
+      - banka-network
+    volumes:
+      - order-service-logs:/var/log/banka
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${ORDER_SERVER_PORT:-8088}/actuator/health/liveness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   api-gateway:
     build:
       context: ..
@@ -809,6 +897,7 @@ services:
       VERIFICATION_SERVER_PORT: ${VERIFICATION_SERVER_PORT:-8086}
       TRANSACTION_SERVER_PORT: ${TRANSACTION_SERVER_PORT:-8087}
       CARD_SERVICE_PORT: ${CARD_SERVER_PORT:-8087}
+      ORDER_SERVER_PORT: ${ORDER_SERVER_PORT:-8088}
     depends_on:
       employee-service:
         condition: service_healthy
@@ -823,6 +912,8 @@ services:
       verification-service:
         condition: service_healthy
       transaction-service:
+        condition: service_healthy
+      order-service:
         condition: service_healthy
     networks:
       - banka-network
@@ -857,4 +948,6 @@ volumes:
   exchange-service-logs:
   verification-service-logs:
   transaction-service-logs:
+  order-service-logs:
+  postgres-order-data:
 
