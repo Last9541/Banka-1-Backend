@@ -183,6 +183,29 @@ services:
       timeout: 5s
       retries: 10
 
+  # Postgres for Stock Service
+  postgres_stock:
+    image: postgres:16
+    container_name: postgres_stock_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${STOCK_DB_NAME:-stock_db}
+      POSTGRES_USER: ${STOCK_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${STOCK_DB_PASSWORD:-postgres}
+    ports:
+      - "${STOCK_DB_EX_PORT:-5441}:5432"
+    volumes:
+      - postgres-stock-data:/var/lib/postgresql/data
+    networks:
+      - banka-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STOCK_DB_USER:-postgres} -d ${STOCK_DB_NAME:-stock_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   # RabbitMQ (shared)
   rabbitmq:
     image: rabbitmq:3-management
@@ -790,6 +813,56 @@ services:
       retries: 10
       start_period: 30s
 
+  # Stock Service
+  stock-service:
+    build:
+      context: ..
+      dockerfile: stock-service/Dockerfile
+      args:
+        SERVER_PORT: ${STOCK_SERVICE_PORT:-8090}
+    container_name: stock-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      STOCK_SERVICE_HOST: 0.0.0.0
+      STOCK_SERVICE_PORT: ${STOCK_SERVICE_PORT:-8090}
+      SERVER_PORT: ${STOCK_SERVICE_PORT:-8090}
+      STOCK_DB_HOST: postgres_stock
+      STOCK_DB_PORT: 5432
+      STOCK_DB_NAME: ${STOCK_DB_NAME:-stock_db}
+      STOCK_DB_USER: ${STOCK_DB_USER:-postgres}
+      STOCK_DB_PASSWORD: ${STOCK_DB_PASSWORD:-postgres}
+      STOCK_EXCHANGE_SERVICE_URL: ${STOCK_EXCHANGE_SERVICE_URL:-http://exchange-service:${EXCHANGE_SERVER_PORT:-8085}}
+      STOCK_MARKET_DATA_BASE_URL: ${STOCK_MARKET_DATA_BASE_URL:-https://api.twelvedata.com}
+      STOCK_MARKET_DATA_API_KEY: ${STOCK_MARKET_DATA_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET}
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://otel-collector:4318/v1/metrics
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_SERVICE_NAME: stock-service
+      LOGGING_FILE_PATH: /var/log/banka
+    depends_on:
+      postgres_stock:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    expose:
+      - "${STOCK_SERVICE_PORT:-8090}"
+    networks:
+      - banka-network
+    volumes:
+      - stock-service-logs:/var/log/banka
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${STOCK_SERVICE_PORT:-8090}/actuator/health/liveness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   api-gateway:
     build:
       context: ..
@@ -809,6 +882,7 @@ services:
       VERIFICATION_SERVER_PORT: ${VERIFICATION_SERVER_PORT:-8086}
       TRANSACTION_SERVER_PORT: ${TRANSACTION_SERVER_PORT:-8087}
       CARD_SERVICE_PORT: ${CARD_SERVER_PORT:-8087}
+      STOCK_SERVICE_PORT: ${STOCK_SERVICE_PORT:-8090}
     depends_on:
       employee-service:
         condition: service_healthy
@@ -823,6 +897,8 @@ services:
       verification-service:
         condition: service_healthy
       transaction-service:
+        condition: service_healthy
+      stock-service:
         condition: service_healthy
     networks:
       - banka-network
@@ -846,6 +922,7 @@ volumes:
   postgres-transfer-data:
   postgres-exchange-data:
   postgres-verification-data:
+  postgres-stock-data:
   grafana-data:
   loki-data:
   notification-service-logs:
@@ -857,4 +934,5 @@ volumes:
   exchange-service-logs:
   verification-service-logs:
   transaction-service-logs:
+  stock-service-logs:
 
