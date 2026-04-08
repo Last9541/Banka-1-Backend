@@ -461,7 +461,7 @@ STOCK_DB_PASSWORD=postgres
 JWT_SECRET=local_stock_dev_secret_at_least_32_chars
 STOCK_EXCHANGE_SERVICE_URL=http://localhost:8085
 STOCK_EXCHANGE_SEED_CSV_LOCATION=classpath:seed/exchanges.csv
-STOCK_FUTURES_SEED_CSV_LOCATION=classpath:seed/futures_seed.csv
+STOCK_FUTURES_SEED_CSV_LOCATION=classpath:seed/future_data.csv
 STOCK_FOREX_SEED_CSV_LOCATION=classpath:seed/forex_pairs_seed.csv
 STOCK_MARKET_DATA_BASE_URL=https://www.alphavantage.co
 STOCK_MARKET_DATA_API_KEY=replace_with_provider_api_key
@@ -498,7 +498,7 @@ When the service starts, it:
 3. connects to the PostgreSQL database
 4. lets Liquibase validate and execute migrations if needed
 5. imports stock exchange reference data from the configured CSV file if seeding is enabled
-6. imports futures contract reference data from the configured CSV file if seeding is enabled
+6. imports futures dummy data from the configured CSV file if seeding is enabled, including linked listings and daily snapshots
 7. imports FX pair reference data from the configured CSV file if seeding is enabled
 8. registers the JWT decoder and security filter chain from `security-lib`
 9. registers the `RestClient` bean for `exchange-service`
@@ -539,23 +539,22 @@ That means the new seed file is valid even though it currently contains only reg
 
 The futures seed file is:
 
-- `src/main/resources/seed/futures_seed.csv`
+- `src/main/resources/seed/future_data.csv`
 
 It uses this format:
 
-- `Ticker`
-- `Name`
-- `Contract Size`
-- `Contract Unit`
-- `Settlement Date`
+- `contract_name`
+- `contract_size`
+- `contract_unit`
+- `maintenance_margin`
+- `type`
 
-Supported `Contract Unit` values are:
+During import, the service deterministically generates:
 
-- `Kilogram`
-- `Liter`
-- `Barrel`
-
-`Settlement Date` must be in ISO format `yyyy-MM-dd`.
+- `FuturesContract.ticker`
+- `FuturesContract.settlementDate`
+- `Listing` market snapshot values
+- `ListingDailyPriceInfo` for the dummy trading day
 
 The FX pair seed file is:
 

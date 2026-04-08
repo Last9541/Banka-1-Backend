@@ -2,8 +2,15 @@ package com.banka1.stock_service.service;
 
 import com.banka1.stock_service.config.FuturesContractSeedProperties;
 import com.banka1.stock_service.domain.FuturesContract;
+import com.banka1.stock_service.domain.Listing;
+import com.banka1.stock_service.domain.ListingDailyPriceInfo;
+import com.banka1.stock_service.domain.ListingType;
+import com.banka1.stock_service.domain.StockExchange;
 import com.banka1.stock_service.dto.FuturesContractImportResponse;
 import com.banka1.stock_service.repository.FuturesContractRepository;
+import com.banka1.stock_service.repository.ListingDailyPriceInfoRepository;
+import com.banka1.stock_service.repository.ListingRepository;
+import com.banka1.stock_service.repository.StockExchangeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -13,54 +20,61 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
- * Imports futures contract reference data from a CSV file and upserts it into the database.
+ * Imports futures dummy data from {@code future_data.csv} and upserts it into the database.
  *
- * <p>The import is idempotent and keyed by the contract ticker.
- * That means:
+ * <p>Each CSV row is converted into one {@link FuturesContract}, one linked {@link Listing},
+ * and one {@link ListingDailyPriceInfo} snapshot for the dummy trading day.
+ *
+ * <p>The import is idempotent and keyed by the generated contract ticker.
  *
  * <ul>
- *     <li>if a ticker does not exist yet, a new futures contract is created</li>
- *     <li>if a ticker already exists and at least one imported value changed, the contract is updated</li>
- *     <li>if a ticker already exists and all imported values are the same, the row is counted as unchanged</li>
+ *     <li>if at least one required record is missing, the row is counted as created</li>
+ *     <li>if all records exist but at least one imported value changed, the row is counted as updated</li>
+ *     <li>if all imported values already match, the row is counted as unchanged</li>
  * </ul>
- *
- * <p>The importer intentionally accepts only the current production-oriented
- * {@code futures_seed.csv} format so startup seeding and tests stay deterministic.
- *
- * <p>Example:
- * if the CSV contains {@code BRENTNOV26} and the database does not, a new contract is inserted.
- * If {@code BRENTNOV26} already exists with the same values, the row is skipped as unchanged.
- * If only the settlement date changed, the existing row is updated.
  */
 @Service
 @RequiredArgsConstructor
 public class FuturesContractCsvImportService {
 
     private static final List<String> REQUIRED_HEADERS = List.of(
-            "Ticker",
-            "Name",
-            "Contract Size",
-            "Contract Unit",
-            "Settlement Date"
+            "contract_name",
+            "contract_size",
+            "contract_unit",
+            "maintenance_margin",
+            "type"
     );
-    private static final Set<String> ALLOWED_CONTRACT_UNITS = Set.of("Kilogram", "Liter", "Barrel");
+    private static final int MONEY_SCALE = 8;
+    private static final BigDecimal TEN = new BigDecimal("10");
+    private static final BigDecimal ONE_PERCENT = new BigDecimal("0.01");
+    private static final BigDecimal CHANGE_RATE = new BigDecimal("0.015");
+    private static final BigDecimal MIN_MONETARY_VALUE = new BigDecimal("0.00000001");
+    private static final LocalDate BASE_SETTLEMENT_DATE = LocalDate.of(2026, 6, 15);
+    private static final LocalDate DUMMY_PRICE_DATE = LocalDate.of(2026, 4, 8);
+    private static final LocalDateTime DUMMY_LAST_REFRESH = LocalDateTime.of(2026, 4, 8, 12, 0);
+    private static final String DEFAULT_FUTURES_EXCHANGE_MIC = "XCME";
+    private static final String METALS_EXCHANGE_MIC = "XLME";
 
     private final FuturesContractRepository futuresContractRepository;
+    private final ListingRepository listingRepository;
+    private final ListingDailyPriceInfoRepository listingDailyPriceInfoRepository;
+    private final StockExchangeRepository stockExchangeRepository;
     private final FuturesContractSeedProperties futuresContractSeedProperties;
     private final ResourceLoader resourceLoader;
 
@@ -82,11 +96,11 @@ public class FuturesContractCsvImportService {
      * <p>Example locations:
      *
      * <ul>
-     *     <li>{@code classpath:seed/futures_seed.csv}</li>
-     *     <li>{@code file:./custom/futures_seed.csv}</li>
+     *     <li>{@code classpath:seed/future_data.csv}</li>
+     *     <li>{@code file:./custom/future_data.csv}</li>
      * </ul>
      *
-     * @param csvLocation Spring resource location, for example {@code classpath:seed/futures_seed.csv}
+     * @param csvLocation Spring resource location, for example {@code classpath:seed/future_data.csv}
      * @return import summary
      */
     @Transactional
@@ -118,59 +132,66 @@ public class FuturesContractCsvImportService {
     /**
      * Persists parsed CSV rows into the database using ticker as the stable business key.
      *
-     * <p>The method first loads all existing contracts for the imported tickers in one repository call.
-     * It then decides row by row whether to:
-     *
-     * <ul>
-     *     <li>create a new entity</li>
-     *     <li>update an existing entity</li>
-     *     <li>skip persistence because nothing changed</li>
-     * </ul>
-     *
-     * <p>Example:
-     * if the CSV contains {@code CORNSEP26} and the database already contains {@code CORNSEP26}
-     * with the same name, size, unit, and settlement date, the row is counted as unchanged.
-     * If the stored settlement date differs, the row is counted as updated.
-     *
      * @param rows validated parsed rows
      * @param source human-readable source label
      * @return import summary
      */
     private FuturesContractImportResponse persistRows(List<FuturesContractCsvRow> rows, String source) {
-        Collection<String> tickers = rows.stream()
-                .map(FuturesContractCsvRow::ticker)
-                .toList();
+        Map<String, StockExchange> exchangesByMic = loadStockExchangesByMic();
+        StockExchange fallbackExchange = resolveFallbackExchange(exchangesByMic);
 
-        Map<String, FuturesContract> existingByTicker = futuresContractRepository.findAllByTickerIn(tickers)
-                .stream()
-                .collect(Collectors.toMap(FuturesContract::getTicker, Function.identity()));
-
-        List<FuturesContract> entitiesToPersist = new ArrayList<>();
         int createdCount = 0;
         int updatedCount = 0;
         int unchangedCount = 0;
 
         for (FuturesContractCsvRow row : rows) {
-            FuturesContract existingEntity = existingByTicker.get(row.ticker());
-            if (existingEntity == null) {
-                FuturesContract newEntity = new FuturesContract();
-                applyRow(newEntity, row);
-                entitiesToPersist.add(newEntity);
+            boolean rowCreated = false;
+            boolean rowUpdated = false;
+
+            FuturesContract contract = futuresContractRepository.findByTicker(row.ticker()).orElse(null);
+            if (contract == null) {
+                contract = new FuturesContract();
+                applyContractRow(contract, row);
+                contract = futuresContractRepository.saveAndFlush(contract);
+                rowCreated = true;
+            } else if (applyContractRowIfChanged(contract, row)) {
+                futuresContractRepository.save(contract);
+                rowUpdated = true;
+            }
+
+            StockExchange stockExchange = resolveStockExchange(row, exchangesByMic, fallbackExchange);
+            Listing listing = listingRepository.findByListingTypeAndSecurityId(ListingType.FUTURES, contract.getId())
+                    .orElse(null);
+            if (listing == null) {
+                listing = new Listing();
+                applyListingRow(listing, contract, stockExchange, row);
+                listing = listingRepository.saveAndFlush(listing);
+                rowCreated = true;
+            } else if (applyListingRowIfChanged(listing, contract, stockExchange, row)) {
+                listingRepository.save(listing);
+                rowUpdated = true;
+            }
+
+            ListingDailyPriceInfo dailyPriceInfo = listingDailyPriceInfoRepository
+                    .findByListingIdAndDate(listing.getId(), row.listingDate())
+                    .orElse(null);
+            if (dailyPriceInfo == null) {
+                dailyPriceInfo = new ListingDailyPriceInfo();
+                applyDailyPriceRow(dailyPriceInfo, listing, row);
+                listingDailyPriceInfoRepository.save(dailyPriceInfo);
+                rowCreated = true;
+            } else if (applyDailyPriceRowIfChanged(dailyPriceInfo, listing, row)) {
+                listingDailyPriceInfoRepository.save(dailyPriceInfo);
+                rowUpdated = true;
+            }
+
+            if (rowCreated) {
                 createdCount++;
-                continue;
-            }
-
-            if (applyRowIfChanged(existingEntity, row)) {
-                entitiesToPersist.add(existingEntity);
+            } else if (rowUpdated) {
                 updatedCount++;
-                continue;
+            } else {
+                unchangedCount++;
             }
-
-            unchangedCount++;
-        }
-
-        if (!entitiesToPersist.isEmpty()) {
-            futuresContractRepository.saveAll(entitiesToPersist);
         }
 
         return new FuturesContractImportResponse(
@@ -190,12 +211,12 @@ public class FuturesContractCsvImportService {
      * <ul>
      *     <li>resource existence</li>
      *     <li>non-empty header row</li>
-     *     <li>presence of all required futures headers</li>
+     *     <li>presence of all required {@code future_data.csv} headers</li>
      *     <li>consistent column count per row</li>
-     *     <li>duplicate ticker detection inside the same CSV file</li>
+     *     <li>duplicate generated ticker detection inside the same CSV file</li>
      *     <li>positive integer parsing for {@code Contract Size}</li>
-     *     <li>allowed contract-unit validation</li>
-     *     <li>ISO date parsing for {@code Settlement Date}</li>
+     *     <li>positive decimal parsing for {@code maintenance_margin}</li>
+     *     <li>non-blank contract-unit and type validation</li>
      * </ul>
      *
      * <p>The parser keeps row numbers in error messages so invalid files are easy to debug.
@@ -281,7 +302,7 @@ public class FuturesContractCsvImportService {
     }
 
     /**
-     * Validates that all required business columns from {@code futures_seed.csv} exist.
+     * Validates that all required business columns from {@code future_data.csv} exist.
      *
      * @param headerIndexes indexed CSV headers
      * @param source source label used in error messages
@@ -299,7 +320,8 @@ public class FuturesContractCsvImportService {
     /**
      * Converts one parsed CSV row into the intermediate row record used by the importer.
      *
-     * <p>The resulting record is fully validated and ready to be copied into a JPA entity.
+     * <p>The resulting record is fully validated and already contains the generated dummy market values
+     * used for the linked listing and daily snapshot.
      *
      * @param values row values
      * @param headerIndexes indexed CSV headers
@@ -313,25 +335,52 @@ public class FuturesContractCsvImportService {
             int lineNumber,
             String source
     ) {
-        String ticker = requiredValue(values, headerIndexes, "Ticker", lineNumber, source);
-        String name = requiredValue(values, headerIndexes, "Name", lineNumber, source);
+        String contractName = requiredValue(values, headerIndexes, "contract_name", lineNumber, source);
         int contractSize = parseContractSize(
-                requiredValue(values, headerIndexes, "Contract Size", lineNumber, source),
+                requiredValue(values, headerIndexes, "contract_size", lineNumber, source),
                 lineNumber,
                 source
         );
         String contractUnit = parseContractUnit(
-                requiredValue(values, headerIndexes, "Contract Unit", lineNumber, source),
+                requiredValue(values, headerIndexes, "contract_unit", lineNumber, source),
                 lineNumber,
                 source
         );
-        LocalDate settlementDate = parseSettlementDate(
-                requiredValue(values, headerIndexes, "Settlement Date", lineNumber, source),
+        BigDecimal maintenanceMargin = parseMaintenanceMargin(
+                requiredValue(values, headerIndexes, "maintenance_margin", lineNumber, source),
                 lineNumber,
                 source
         );
+        String futuresType = parseFuturesType(
+                requiredValue(values, headerIndexes, "type", lineNumber, source),
+                lineNumber,
+                source
+        );
+        String name = toDisplayLabel(contractName);
+        String ticker = generateTicker(contractName, futuresType, lineNumber, source);
+        LocalDate settlementDate = BASE_SETTLEMENT_DATE.plusWeeks(lineNumber - 2L);
+        BigDecimal price = derivePrice(maintenanceMargin, contractSize);
+        BigDecimal spread = deriveSpread(price);
+        BigDecimal ask = price.add(spread).setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+        BigDecimal bid = normalizeMonetaryValue(price.subtract(spread));
+        BigDecimal change = normalizeMonetaryValue(price.multiply(CHANGE_RATE));
+        long volume = deriveVolume(maintenanceMargin, contractSize);
 
-        return new FuturesContractCsvRow(ticker, name, contractSize, contractUnit, settlementDate);
+        return new FuturesContractCsvRow(
+                ticker,
+                name,
+                contractSize,
+                contractUnit,
+                settlementDate,
+                futuresType,
+                price,
+                ask,
+                bid,
+                change,
+                volume,
+                DUMMY_PRICE_DATE,
+                DUMMY_LAST_REFRESH
+        );
     }
 
     /**
@@ -403,51 +452,70 @@ public class FuturesContractCsvImportService {
     }
 
     /**
-     * Validates the contract unit against the supported domain values.
-     *
-     * <p>The issue specification currently allows only:
-     *
-     * <ul>
-     *     <li>{@code Kilogram}</li>
-     *     <li>{@code Liter}</li>
-     *     <li>{@code Barrel}</li>
-     * </ul>
+     * Validates and normalizes the contract unit from the dummy CSV file.
      *
      * @param rawValue raw CSV value
      * @param lineNumber row number used in error messages
      * @param source source label used in error messages
-     * @return validated contract unit
+     * @return validated display-ready contract unit
      */
     private String parseContractUnit(String rawValue, int lineNumber, String source) {
-        if (!ALLOWED_CONTRACT_UNITS.contains(rawValue)) {
+        String contractUnit = toDisplayLabel(rawValue);
+        if (contractUnit.isBlank()) {
             throw new IllegalArgumentException(
                     "Invalid contract unit '" + rawValue + "' on row " + lineNumber + " in " + source
-                            + ". Supported values are " + ALLOWED_CONTRACT_UNITS
             );
         }
-        return rawValue;
+        if (contractUnit.length() > 32) {
+            throw new IllegalArgumentException(
+                    "Contract unit '" + contractUnit + "' on row " + lineNumber + " in " + source
+                            + " exceeds 32 characters."
+            );
+        }
+        return contractUnit;
     }
 
     /**
-     * Parses a settlement date using ISO {@code yyyy-MM-dd} format.
-     *
-     * <p>Example valid value: {@code 2026-11-20}.
+     * Parses a positive maintenance margin from the dummy CSV file.
      *
      * @param rawValue raw CSV value
      * @param lineNumber row number used in error messages
      * @param source source label used in error messages
-     * @return parsed settlement date
+     * @return parsed positive maintenance margin
      */
-    private LocalDate parseSettlementDate(String rawValue, int lineNumber, String source) {
+    private BigDecimal parseMaintenanceMargin(String rawValue, int lineNumber, String source) {
         try {
-            return LocalDate.parse(rawValue);
-        } catch (DateTimeParseException exception) {
+            BigDecimal maintenanceMargin = new BigDecimal(rawValue);
+            if (maintenanceMargin.signum() <= 0) {
+                throw new IllegalArgumentException(
+                        "maintenance_margin must be positive on row " + lineNumber + " in " + source
+                );
+            }
+            return maintenanceMargin;
+        } catch (NumberFormatException exception) {
             throw new IllegalArgumentException(
-                    "Invalid settlement date '" + rawValue + "' on row " + lineNumber + " in " + source
-                            + ". Expected yyyy-MM-dd format.",
+                    "Invalid maintenance_margin '" + rawValue + "' on row " + lineNumber + " in " + source,
                     exception
             );
         }
+    }
+
+    /**
+     * Validates the futures type from the dummy CSV file.
+     *
+     * @param rawValue raw CSV value
+     * @param lineNumber row number used in error messages
+     * @param source source label used in error messages
+     * @return normalized futures type
+     */
+    private String parseFuturesType(String rawValue, int lineNumber, String source) {
+        String futuresType = rawValue.trim().toUpperCase(Locale.ROOT);
+        if (futuresType.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Missing futures type on row " + lineNumber + " in " + source
+            );
+        }
+        return futuresType;
     }
 
     /**
@@ -508,15 +576,60 @@ public class FuturesContractCsvImportService {
     }
 
     /**
-     * Copies parsed row values into a persistent entity.
+     * Loads all currently persisted stock exchanges indexed by MIC code.
      *
-     * <p>This method performs the raw field assignment only.
-     * It is used both when creating a brand-new contract and when updating an existing one.
+     * @return MIC-indexed stock exchanges
+     */
+    private Map<String, StockExchange> loadStockExchangesByMic() {
+        return stockExchangeRepository.findAllByOrderByExchangeNameAsc()
+                .stream()
+                .collect(
+                        LinkedHashMap::new,
+                        (map, exchange) -> map.put(exchange.getExchangeMICCode(), exchange),
+                        Map::putAll
+                );
+    }
+
+    /**
+     * Resolves the fallback exchange used when a preferred MIC code is unavailable.
+     *
+     * @param exchangesByMic MIC-indexed stock exchanges
+     * @return fallback exchange
+     */
+    private StockExchange resolveFallbackExchange(Map<String, StockExchange> exchangesByMic) {
+        if (exchangesByMic.isEmpty()) {
+            throw new IllegalStateException(
+                    "At least one stock exchange must exist before futures dummy data can be imported."
+            );
+        }
+        return exchangesByMic.values().stream().findFirst().orElseThrow();
+    }
+
+    /**
+     * Resolves the preferred stock exchange for one futures row.
+     *
+     * <p>Most dummy futures are attached to {@code XCME}, while metal contracts prefer {@code XLME}.
+     *
+     * @param row parsed CSV row
+     * @param exchangesByMic MIC-indexed stock exchanges
+     * @param fallbackExchange fallback exchange used when the preferred MIC is unavailable
+     * @return resolved stock exchange
+     */
+    private StockExchange resolveStockExchange(
+            FuturesContractCsvRow row,
+            Map<String, StockExchange> exchangesByMic,
+            StockExchange fallbackExchange
+    ) {
+        return exchangesByMic.getOrDefault(row.preferredExchangeMic(), fallbackExchange);
+    }
+
+    /**
+     * Copies parsed contract values into a persistent futures entity.
      *
      * @param entity target entity
      * @param row parsed CSV row
      */
-    private void applyRow(FuturesContract entity, FuturesContractCsvRow row) {
+    private void applyContractRow(FuturesContract entity, FuturesContractCsvRow row) {
         entity.setTicker(row.ticker());
         entity.setName(row.name());
         entity.setContractSize(row.contractSize());
@@ -525,33 +638,29 @@ public class FuturesContractCsvImportService {
     }
 
     /**
-     * Updates an existing entity only when at least one imported value changed.
-     *
-     * <p>This is what allows the import summary to distinguish between updated rows and unchanged rows.
+     * Updates an existing futures entity only when at least one imported value changed.
      *
      * @param entity existing entity from the database
      * @param row parsed CSV row
      * @return {@code true} if the entity was changed and should be persisted
      */
-    private boolean applyRowIfChanged(FuturesContract entity, FuturesContractCsvRow row) {
-        if (matches(entity, row)) {
+    private boolean applyContractRowIfChanged(FuturesContract entity, FuturesContractCsvRow row) {
+        if (contractMatches(entity, row)) {
             return false;
         }
 
-        applyRow(entity, row);
+        applyContractRow(entity, row);
         return true;
     }
 
     /**
-     * Compares all imported business fields between the existing entity and the parsed row.
-     *
-     * <p>If this method returns {@code true}, the importer treats the row as unchanged and skips persistence.
+     * Compares all imported contract fields between the existing entity and the parsed row.
      *
      * @param entity existing entity from the database
      * @param row parsed CSV row
      * @return {@code true} when all imported fields already match
      */
-    private boolean matches(FuturesContract entity, FuturesContractCsvRow row) {
+    private boolean contractMatches(FuturesContract entity, FuturesContractCsvRow row) {
         return Objects.equals(entity.getTicker(), row.ticker())
                 && Objects.equals(entity.getName(), row.name())
                 && Objects.equals(entity.getContractSize(), row.contractSize())
@@ -560,7 +669,260 @@ public class FuturesContractCsvImportService {
     }
 
     /**
-     * Intermediate immutable representation of one validated futures contract CSV row.
+     * Copies parsed market data into a persistent listing entity.
+     *
+     * @param entity target listing
+     * @param contract linked futures contract
+     * @param stockExchange resolved stock exchange
+     * @param row parsed CSV row
+     */
+    private void applyListingRow(
+            Listing entity,
+            FuturesContract contract,
+            StockExchange stockExchange,
+            FuturesContractCsvRow row
+    ) {
+        entity.setSecurityId(contract.getId());
+        entity.setListingType(ListingType.FUTURES);
+        entity.setStockExchange(stockExchange);
+        entity.setTicker(row.ticker());
+        entity.setName(row.name());
+        entity.setLastRefresh(row.lastRefresh());
+        entity.setPrice(row.price());
+        entity.setAsk(row.ask());
+        entity.setBid(row.bid());
+        entity.setChange(row.change());
+        entity.setVolume(row.volume());
+    }
+
+    /**
+     * Updates a listing entity only when at least one imported value changed.
+     *
+     * @param entity existing listing
+     * @param contract linked futures contract
+     * @param stockExchange resolved stock exchange
+     * @param row parsed CSV row
+     * @return {@code true} if the listing changed
+     */
+    private boolean applyListingRowIfChanged(
+            Listing entity,
+            FuturesContract contract,
+            StockExchange stockExchange,
+            FuturesContractCsvRow row
+    ) {
+        if (listingMatches(entity, contract, stockExchange, row)) {
+            return false;
+        }
+
+        applyListingRow(entity, contract, stockExchange, row);
+        return true;
+    }
+
+    /**
+     * Compares all imported listing fields between the existing entity and the parsed row.
+     *
+     * @param entity existing listing
+     * @param contract linked futures contract
+     * @param stockExchange resolved stock exchange
+     * @param row parsed CSV row
+     * @return {@code true} when all imported listing fields already match
+     */
+    private boolean listingMatches(
+            Listing entity,
+            FuturesContract contract,
+            StockExchange stockExchange,
+            FuturesContractCsvRow row
+    ) {
+        return Objects.equals(entity.getSecurityId(), contract.getId())
+                && entity.getListingType() == ListingType.FUTURES
+                && entity.getStockExchange() != null
+                && Objects.equals(entity.getStockExchange().getId(), stockExchange.getId())
+                && Objects.equals(entity.getTicker(), row.ticker())
+                && Objects.equals(entity.getName(), row.name())
+                && Objects.equals(entity.getLastRefresh(), row.lastRefresh())
+                && Objects.equals(entity.getPrice(), row.price())
+                && Objects.equals(entity.getAsk(), row.ask())
+                && Objects.equals(entity.getBid(), row.bid())
+                && Objects.equals(entity.getChange(), row.change())
+                && Objects.equals(entity.getVolume(), row.volume());
+    }
+
+    /**
+     * Copies parsed market data into a persistent daily-price entity.
+     *
+     * @param entity target daily snapshot
+     * @param listing linked listing
+     * @param row parsed CSV row
+     */
+    private void applyDailyPriceRow(ListingDailyPriceInfo entity, Listing listing, FuturesContractCsvRow row) {
+        entity.setListing(listing);
+        entity.setDate(row.listingDate());
+        entity.setPrice(row.price());
+        entity.setAsk(row.ask());
+        entity.setBid(row.bid());
+        entity.setChange(row.change());
+        entity.setVolume(row.volume());
+    }
+
+    /**
+     * Updates a daily snapshot only when at least one imported value changed.
+     *
+     * @param entity existing daily snapshot
+     * @param listing linked listing
+     * @param row parsed CSV row
+     * @return {@code true} if the daily snapshot changed
+     */
+    private boolean applyDailyPriceRowIfChanged(
+            ListingDailyPriceInfo entity,
+            Listing listing,
+            FuturesContractCsvRow row
+    ) {
+        if (dailyPriceMatches(entity, listing, row)) {
+            return false;
+        }
+
+        applyDailyPriceRow(entity, listing, row);
+        return true;
+    }
+
+    /**
+     * Compares all imported daily-price fields between the existing entity and the parsed row.
+     *
+     * @param entity existing daily snapshot
+     * @param listing linked listing
+     * @param row parsed CSV row
+     * @return {@code true} when all imported daily fields already match
+     */
+    private boolean dailyPriceMatches(
+            ListingDailyPriceInfo entity,
+            Listing listing,
+            FuturesContractCsvRow row
+    ) {
+        return entity.getListing() != null
+                && Objects.equals(entity.getListing().getId(), listing.getId())
+                && Objects.equals(entity.getDate(), row.listingDate())
+                && Objects.equals(entity.getPrice(), row.price())
+                && Objects.equals(entity.getAsk(), row.ask())
+                && Objects.equals(entity.getBid(), row.bid())
+                && Objects.equals(entity.getChange(), row.change())
+                && Objects.equals(entity.getVolume(), row.volume());
+    }
+
+    /**
+     * Generates a stable ticker from the contract name and futures type.
+     *
+     * @param contractName raw contract name from CSV
+     * @param futuresType normalized futures type
+     * @param lineNumber row number used in error messages
+     * @param source source label used in error messages
+     * @return generated ticker
+     */
+    private String generateTicker(String contractName, String futuresType, int lineNumber, String source) {
+        String generatedTicker = (contractName + futuresType)
+                .replaceAll("[^A-Za-z0-9]", "")
+                .toUpperCase(Locale.ROOT);
+        if (generatedTicker.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Unable to generate futures ticker on row " + lineNumber + " in " + source
+            );
+        }
+        return generatedTicker.length() > 32 ? generatedTicker.substring(0, 32) : generatedTicker;
+    }
+
+    /**
+     * Formats CSV labels into a display-friendly title case.
+     *
+     * @param rawValue raw CSV text
+     * @return display-ready label
+     */
+    private String toDisplayLabel(String rawValue) {
+        String normalizedValue = rawValue.trim().toLowerCase(Locale.ROOT);
+        StringBuilder builder = new StringBuilder(normalizedValue.length());
+        boolean capitalizeNext = true;
+
+        for (int i = 0; i < normalizedValue.length(); i++) {
+            char currentCharacter = normalizedValue.charAt(i);
+            if (Character.isLetterOrDigit(currentCharacter)) {
+                builder.append(capitalizeNext
+                        ? Character.toUpperCase(currentCharacter)
+                        : currentCharacter);
+                capitalizeNext = false;
+                continue;
+            }
+
+            builder.append(currentCharacter);
+            capitalizeNext = currentCharacter == ' '
+                    || currentCharacter == '-'
+                    || currentCharacter == '/';
+        }
+
+        return builder.toString();
+    }
+
+    /**
+     * Derives the dummy current price from the provided maintenance margin.
+     *
+     * <p>The seed file stores maintenance margin instead of price, while the domain model derives
+     * maintenance margin as {@code contractSize * price * 10%}. The importer reverses that formula
+     * to obtain a deterministic dummy price.
+     *
+     * @param maintenanceMargin parsed maintenance margin
+     * @param contractSize parsed contract size
+     * @return derived dummy price
+     */
+    private BigDecimal derivePrice(BigDecimal maintenanceMargin, int contractSize) {
+        return maintenanceMargin.multiply(TEN)
+                .divide(BigDecimal.valueOf(contractSize), MONEY_SCALE, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Derives a bid/ask spread from the current dummy price.
+     *
+     * @param price current dummy price
+     * @return derived spread
+     */
+    private BigDecimal deriveSpread(BigDecimal price) {
+        BigDecimal spread = price.multiply(ONE_PERCENT).setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+        if (spread.signum() == 0) {
+            return MIN_MONETARY_VALUE;
+        }
+        if (spread.compareTo(price) >= 0) {
+            return normalizeMonetaryValue(
+                    price.divide(BigDecimal.valueOf(2), MONEY_SCALE, RoundingMode.HALF_UP)
+            );
+        }
+        return spread;
+    }
+
+    /**
+     * Derives a deterministic dummy volume from the maintenance margin and contract size.
+     *
+     * @param maintenanceMargin parsed maintenance margin
+     * @param contractSize parsed contract size
+     * @return derived dummy volume
+     */
+    private long deriveVolume(BigDecimal maintenanceMargin, int contractSize) {
+        long maintenanceBasedVolume = maintenanceMargin.longValue();
+        long contractBasedVolume = Math.max(1L, contractSize / 100L);
+        return Math.max(1L, maintenanceBasedVolume + contractBasedVolume);
+    }
+
+    /**
+     * Normalizes a monetary value to the scale used by listing tables.
+     *
+     * @param value raw monetary value
+     * @return normalized value with non-negative lower bound
+     */
+    private BigDecimal normalizeMonetaryValue(BigDecimal value) {
+        BigDecimal normalizedValue = value.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+        if (normalizedValue.signum() <= 0) {
+            return MIN_MONETARY_VALUE;
+        }
+        return normalizedValue;
+    }
+
+    /**
+     * Intermediate immutable representation of one validated futures CSV row.
      *
      * <p>This record exists so parsing and validation stay separated from persistence.
      * The importer first converts the file into a clean row model and only then applies it to JPA entities.
@@ -570,7 +932,24 @@ public class FuturesContractCsvImportService {
             String name,
             Integer contractSize,
             String contractUnit,
-            LocalDate settlementDate
+            LocalDate settlementDate,
+            String futuresType,
+            BigDecimal price,
+            BigDecimal ask,
+            BigDecimal bid,
+            BigDecimal change,
+            Long volume,
+            LocalDate listingDate,
+            LocalDateTime lastRefresh
     ) {
+
+        /**
+         * Resolves the preferred exchange MIC code for the parsed futures type.
+         *
+         * @return preferred exchange MIC code
+         */
+        private String preferredExchangeMic() {
+            return "METALS".equals(futuresType) ? METALS_EXCHANGE_MIC : DEFAULT_FUTURES_EXCHANGE_MIC;
+        }
     }
 }
