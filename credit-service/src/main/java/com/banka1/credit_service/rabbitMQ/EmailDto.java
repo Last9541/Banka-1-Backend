@@ -9,7 +9,8 @@ import java.math.BigDecimal;
 
 /**
  * DTO sent to the RabbitMQ email service.
- * Contains all necessary data for generating and sending email notifications.
+ * Contains all necessary data for generating and sending email notifications
+ * related to credit/loan operations.
  * Fields with {@code null} values are excluded from JSON serialization.
  */
 @NoArgsConstructor
@@ -34,14 +35,27 @@ public class EmailDto {
     private EmailType emailType;
 
 
+    /** The credit/loan ID associated with this notification. */
     private Long creditId;
 
+    /** The approved credit amount (used for CREDIT_APPROVED notification). */
     private BigDecimal approvedAmount;
 
+    /** The installment amount due (used for CREDIT_INSTALLMENT_FAILED notification). */
     private BigDecimal installmentAmount;
 
+    /** Hours until payment deadline (used for CREDIT_INSTALLMENT_FAILED notification). */
     private Integer hours;
 
+    /**
+     * Constructs an EmailDto for failed credit installment notification.
+     *
+     * @param userEmail the recipient's email address
+     * @param username the recipient's username
+     * @param creditId the credit ID
+     * @param installmentAmount the amount of the failed installment
+     * @param hours hours until payment deadline
+     */
     public EmailDto(String userEmail,String username, Long creditId, BigDecimal installmentAmount,Integer hours) {
         this.userEmail = userEmail;
         this.username = username;
@@ -51,6 +65,13 @@ public class EmailDto {
         this.hours=hours;
     }
 
+    /**
+     * Constructs an EmailDto for denied credit notification.
+     *
+     * @param userEmail the recipient's email address
+     * @param username the recipient's username
+     * @param creditId the credit ID
+     */
     public EmailDto(String userEmail, String username, Long creditId) {
         this.userEmail = userEmail;
         this.username = username;
@@ -58,6 +79,14 @@ public class EmailDto {
         this.emailType = EmailType.CREDIT_DENIED;
     }
 
+    /**
+     * Constructs an EmailDto for approved credit notification.
+     *
+     * @param userEmail the recipient's email address
+     * @param username the recipient's username
+     * @param approvedAmount the amount of approved credit
+     * @param creditId the credit ID
+     */
     public EmailDto(String userEmail, String username, BigDecimal approvedAmount,Long creditId) {
         this.userEmail = userEmail;
         this.username = username;
