@@ -34,6 +34,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -154,7 +155,11 @@ public class OrderExecutionServiceImpl implements OrderExecutionService {
         }
 
         int quantityToExecute = determineExecutionQuantity(managedOrder, executableCapacity);
-        BigDecimal executionPricePerUnit = calculateExecutionPricePerUnit(managedOrder, listing);
+        Optional<BigDecimal> executionPriceOpt = calculateExecutionPricePerUnit(managedOrder, listing);
+        if (executionPriceOpt.isEmpty()) {
+            return;
+        }
+        BigDecimal executionPricePerUnit = executionPriceOpt.get();
         BigDecimal grossChunkAmount = executionPricePerUnit
                 .multiply(BigDecimal.valueOf(managedOrder.getContractSize()))
                 .multiply(BigDecimal.valueOf(quantityToExecute));
@@ -175,10 +180,10 @@ public class OrderExecutionServiceImpl implements OrderExecutionService {
 
     private boolean activateIfEligible(Order order, StockListingDto listing) {
         if (order.getOrderType() == OrderType.STOP) {
-            Boolean activated = evaluateStopTrigger(order, listing);
-            if (activated == null) {
+            if (!canEvaluateStop(order, listing)) {
                 return false;
             }
+            boolean activated = isStopActivated(order, listing);
             if (activated) {
                 order.setOrderType(OrderType.MARKET);
                 orderRepository.save(order);
@@ -186,10 +191,10 @@ public class OrderExecutionServiceImpl implements OrderExecutionService {
             return activated;
         }
         if (order.getOrderType() == OrderType.STOP_LIMIT) {
-            Boolean activated = evaluateStopTrigger(order, listing);
-            if (activated == null) {
+            if (!canEvaluateStop(order, listing)) {
                 return false;
             }
+            boolean activated = isStopActivated(order, listing);
             if (activated) {
                 order.setOrderType(OrderType.LIMIT);
                 orderRepository.save(order);
@@ -199,14 +204,19 @@ public class OrderExecutionServiceImpl implements OrderExecutionService {
         return isExecutableAtCurrentMarket(order, listing);
     }
 
-    private Boolean evaluateStopTrigger(Order order, StockListingDto listing) {
+    private boolean canEvaluateStop(Order order, StockListingDto listing) {
         BigDecimal quote = order.getDirection() == OrderDirection.BUY ? listing.getAsk() : listing.getBid();
         if (quote == null) {
             log.warn("Skipping STOP activation for order {}: {} quote is unavailable",
                     order.getId(),
                     order.getDirection() == OrderDirection.BUY ? "ask" : "bid");
-            return null;
+            return false;
         }
+        return true;
+    }
+
+    private boolean isStopActivated(Order order, StockListingDto listing) {
+        BigDecimal quote = order.getDirection() == OrderDirection.BUY ? listing.getAsk() : listing.getBid();
         return order.getDirection() == OrderDirection.BUY
                 ? quote.compareTo(order.getStopValue()) >= 0
                 : quote.compareTo(order.getStopValue()) < 0;
@@ -247,35 +257,33 @@ public class OrderExecutionServiceImpl implements OrderExecutionService {
         return ThreadLocalRandom.current().nextInt(executableCapacity) + 1;
     }
 
-    private BigDecimal calculateExecutionPricePerUnit(Order order, StockListingDto listing) {
+    private Optional<BigDecimal> calculateExecutionPricePerUnit(Order order, StockListingDto listing) {
         return switch (order.getOrderType()) {
             case MARKET -> {
                 BigDecimal marketQuote = order.getDirection() == OrderDirection.BUY ? listing.getAsk() : listing.getBid();
                 if (marketQuote == null) {
-                    throw new IllegalStateException(String.format(
-                            "Cannot compute MARKET execution price for order %d: %s quote is unavailable",
+                    log.warn("Skipping MARKET execution for order {}: {} quote is unavailable",
                             order.getId(),
-                            order.getDirection() == OrderDirection.BUY ? "ask" : "bid"));
+                            order.getDirection() == OrderDirection.BUY ? "ask" : "bid");
+                    yield Optional.empty();
                 }
-                yield marketQuote;
+                yield Optional.of(marketQuote);
             }
             case LIMIT -> {
                 if (order.getDirection() == OrderDirection.BUY) {
                     BigDecimal ask = listing.getAsk();
                     if (ask == null) {
-                        throw new IllegalStateException(String.format(
-                                "Cannot compute BUY LIMIT execution price for order %d: ask quote is unavailable",
-                                order.getId()));
+                        log.warn("Skipping BUY LIMIT execution for order {}: ask quote is unavailable", order.getId());
+                        yield Optional.empty();
                     }
-                    yield order.getLimitValue().min(ask);
+                    yield Optional.of(order.getLimitValue().min(ask));
                 }
                 BigDecimal bid = listing.getBid();
                 if (bid == null) {
-                    throw new IllegalStateException(String.format(
-                            "Cannot compute SELL LIMIT execution price for order %d: bid quote is unavailable",
-                            order.getId()));
+                    log.warn("Skipping SELL LIMIT execution for order {}: bid quote is unavailable", order.getId());
+                    yield Optional.empty();
                 }
-                yield order.getLimitValue().max(bid);
+                yield Optional.of(order.getLimitValue().max(bid));
             }
             case STOP, STOP_LIMIT -> throw new IllegalStateException("Stop-family orders must be activated before execution");
         };
