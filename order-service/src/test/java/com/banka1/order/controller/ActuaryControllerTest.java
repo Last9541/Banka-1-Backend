@@ -139,11 +139,12 @@ class ActuaryControllerTest {
 
     @Test
     void resetLimit_returns200OnSuccess() {
-        ResponseEntity<Void> response = controller.resetLimit(1L);
+        ResponseEntity<SimpleResponse> response = controller.resetLimit(1L);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo("success");
         verify(actuaryService).resetLimit(1L);
-
     }
 
     @Test

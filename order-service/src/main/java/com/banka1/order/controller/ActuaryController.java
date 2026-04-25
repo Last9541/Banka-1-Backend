@@ -103,9 +103,9 @@ public class ActuaryController {
      */
     @PutMapping("/agents/{id}/reset-limit")
     @PreAuthorize("hasRole('SUPERVISOR')")
-    public ResponseEntity<Void> resetLimit(@PathVariable Long id) {
+    public ResponseEntity<SimpleResponse> resetLimit(@PathVariable Long id) {
         actuaryService.resetLimit(id);
-        return ResponseEntity.ok().build();
+        return ResponseEntity.ok(SimpleResponse.success("Limit reset successfully"));
     }
 
     /**
