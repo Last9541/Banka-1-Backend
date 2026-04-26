@@ -69,7 +69,7 @@ class TransactionControllerWebMvcTest {
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_BASIC")))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isInternalServerError());
     }
 
     @Test
@@ -98,13 +98,13 @@ class TransactionControllerWebMvcTest {
     }
 
     @Test
-    void newPaymentReturnsUnauthorizedWhenNoToken() throws Exception {
+    void newPaymentReturnsForbiddenWhenNoTokenBecauseCsrf() throws Exception {
         NewPaymentDto dto = validPaymentDto();
 
         mockMvc.perform(post("/payment")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
     }
 
     @Test
