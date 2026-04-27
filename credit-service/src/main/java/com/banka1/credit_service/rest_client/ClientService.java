@@ -23,6 +23,12 @@ public class ClientService {
         this.restClient = restClient;
     }
 
+
+    public void addMarginPermission(Long id)
+    {
+        restClient.put().uri("/customers/margin/{id}",id).retrieve().toBodilessEntity();
+    }
+
 //    public ClientInfoResponseDto getUser(String jmbg) {
 //        return clientServiceClient.get()
 //                .uri("/customers/jmbg/{jmbg}", jmbg)
