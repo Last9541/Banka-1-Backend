@@ -141,6 +141,60 @@ class StockExchangeStockExchangeCsvImportServiceTest {
     }
 
     @Test
+    void importFromResourceNormalizesLongFormCurrencyToIsoCode() {
+        StockExchangeCsvImportService service = createService();
+        when(stockExchangeRepository.findAllByExchangeMICCodeIn(any())).thenReturn(List.of());
+        when(stockExchangeRepository.saveAll(any())).thenAnswer(invocation -> List.of());
+
+        service.importFromResource(
+                csvResource(csvContent(
+                        EXCHANGE_CSV_HEADER,
+                        "Chicago Mercantile Exchange,CME,XCME,United States,United States Dollar,America/New_York,09:30,16:00,,,,,true",
+                        "London Metal Exchange,LME,XLME,United Kingdom,British Pound Sterling,Europe/London,08:00,16:00,,,,,true"
+                )),
+                "test-exchanges.csv"
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<StockExchange>> captor = ArgumentCaptor.forClass(List.class);
+        verify(stockExchangeRepository).saveAll(captor.capture());
+        List<StockExchange> saved = captor.getValue();
+
+        assertThat(saved).extracting(StockExchange::getExchangeMICCode, StockExchange::getCurrency)
+                .containsExactly(
+                        org.assertj.core.api.Assertions.tuple("XCME", "USD"),
+                        org.assertj.core.api.Assertions.tuple("XLME", "GBP")
+                );
+        assertThat(saved).allMatch(StockExchange::getIsActive);
+    }
+
+    @Test
+    void importFromResourceMarksExchangesWithUnsupportedCurrencyAsInactive() {
+        StockExchangeCsvImportService service = createService();
+        when(stockExchangeRepository.findAllByExchangeMICCodeIn(any())).thenReturn(List.of());
+        when(stockExchangeRepository.saveAll(any())).thenAnswer(invocation -> List.of());
+
+        service.importFromResource(
+                csvResource(csvContent(
+                        EXCHANGE_CSV_HEADER,
+                        "Jakarta Futures Exchange,BBJ,XBBJ,Indonesia,Indonesian Rupiah,Asia/Jakarta,09:00,17:30,,,,,true"
+                )),
+                "test-exchanges.csv"
+        );
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<StockExchange>> captor = ArgumentCaptor.forClass(List.class);
+        verify(stockExchangeRepository).saveAll(captor.capture());
+        StockExchange saved = captor.getValue().getFirst();
+
+        // Currency value is preserved (so an operator can audit it) but the
+        // exchange is force-deactivated so trading flows do not call the
+        // unmappable currency endpoint and trigger 5xx during checkout.
+        assertThat(saved.getCurrency()).isEqualTo("Indonesian Rupiah");
+        assertThat(saved.getIsActive()).isFalse();
+    }
+
+    @Test
     void importFromResourceRejectsDuplicateMicCodesInsideCsv() {
         StockExchangeCsvImportService service = createService();
 

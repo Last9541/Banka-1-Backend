@@ -15,6 +15,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -91,6 +92,29 @@ public class GlobalExceptionHandler {
                 "ERR_VALIDATION",
                 "Neispravni argumenti",
                 ex.getMessage()
+        );
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Obradjuje greske kada Spring ne moze da konvertuje vrednost iz path-a ili
+     * query parametra u ocekivani tip (npr. nepostojeca konstanta enum-a kao sto je
+     * {@code CurrencyCode}). Ranije su se ovakve greske vracale kao 500 jer ih je
+     * pokupio generic {@link Exception} handler iako je u pitanju neispravan ulaz
+     * od strane klijenta.
+     *
+     * @param ex izuzetak nastao pri konverziji parametra
+     * @return HTTP 400 Bad Request odgovor sa kodom {@code ERR_VALIDATION}
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponseDto> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String requiredType = ex.getRequiredType() == null ? "" : ex.getRequiredType().getSimpleName();
+        String detail = "Neispravna vrednost '" + ex.getValue() + "' za parametar '" + ex.getName() + "'"
+                + (requiredType.isEmpty() ? "." : ", ocekivan tip: " + requiredType + ".");
+        ErrorResponseDto error = new ErrorResponseDto(
+                "ERR_VALIDATION",
+                "Neispravni argumenti",
+                detail
         );
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }

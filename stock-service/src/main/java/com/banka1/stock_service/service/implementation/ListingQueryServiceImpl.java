@@ -660,6 +660,7 @@ public class ListingQueryServiceImpl implements ListingQueryService {
                 row.listing().getTicker(),
                 row.listing().getName(),
                 row.listing().getStockExchange().getExchangeMICCode(),
+                row.listing().getStockExchange().getCurrency(),
                 row.listing().getPrice(),
                 row.listing().getChange(),
                 row.listing().getVolume(),
