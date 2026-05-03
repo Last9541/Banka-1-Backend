@@ -13,9 +13,11 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.lang.reflect.Method;
 import java.util.NoSuchElementException;
+import com.banka1.account_service.domain.enums.CurrencyCode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,6 +43,30 @@ class GlobalExceptionHandlerUnitTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().getErrorCode()).isEqualTo("ERR_VALIDATION");
+    }
+
+    @Test
+    void handleTypeMismatchMapsInvalidPathParamToBadRequest() {
+        // Reproduces the situation where the listing currency is "United States Dollar"
+        // and Spring fails to bind it to a CurrencyCode enum on the bank-account
+        // lookup endpoint. The previous behavior was to fall through to the generic
+        // 500 handler; now the user-facing response is a 400 with a helpful message.
+        MethodArgumentTypeMismatchException ex = new MethodArgumentTypeMismatchException(
+                "United States Dollar",
+                CurrencyCode.class,
+                "currency",
+                null,
+                new IllegalArgumentException("invalid")
+        );
+
+        ResponseEntity<ErrorResponseDto> response = handler.handleTypeMismatch(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().getErrorCode()).isEqualTo("ERR_VALIDATION");
+        assertThat(response.getBody().getErrorDesc())
+                .contains("United States Dollar")
+                .contains("currency")
+                .contains("CurrencyCode");
     }
 
     @Test

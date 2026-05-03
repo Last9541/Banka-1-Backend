@@ -13,6 +13,7 @@ import java.time.LocalDate;
  * @param ticker listing ticker
  * @param name listing display name
  * @param exchangeMICCode exchange MIC code of the listing
+ * @param currency ISO 4217 currency code of the listing's exchange
  * @param price current listing price
  * @param change current absolute change
  * @param volume current volume
@@ -25,6 +26,7 @@ public record ListingSummaryResponse(
         String ticker,
         String name,
         String exchangeMICCode,
+        String currency,
         BigDecimal price,
         BigDecimal change,
         Long volume,

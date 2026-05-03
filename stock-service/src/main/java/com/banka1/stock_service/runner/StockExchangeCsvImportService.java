@@ -5,6 +5,7 @@ import com.banka1.stock_service.domain.StockExchange;
 import com.banka1.stock_service.dto.StockExchangeImportResponse;
 import com.banka1.stock_service.repository.StockExchangeRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class StockExchangeCsvImportService {
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("H:mm");
@@ -594,11 +596,22 @@ public class StockExchangeCsvImportService {
      * @param row parsed CSV row
      */
     private void applyRow(StockExchange entity, StockExchangeCsvRow row) {
+        String normalizedCurrency = CurrencyNormalizer.normalize(row.currency());
+        boolean currencySupported = CurrencyNormalizer.isSupported(normalizedCurrency);
+        if (!currencySupported) {
+            log.warn(
+                    "Stock exchange '{}' (MIC {}) imports currency '{}' which is not supported by account-service; "
+                            + "marking exchange as inactive so trading flows do not call unmappable currency endpoints",
+                    row.exchangeName(),
+                    row.exchangeMICCode(),
+                    row.currency()
+            );
+        }
         entity.setExchangeName(row.exchangeName());
         entity.setExchangeAcronym(row.exchangeAcronym());
         entity.setExchangeMICCode(row.exchangeMICCode());
         entity.setPolity(row.polity());
-        entity.setCurrency(row.currency());
+        entity.setCurrency(normalizedCurrency);
         entity.setTimeZone(row.timeZone());
         entity.setOpenTime(row.openTime());
         entity.setCloseTime(row.closeTime());
@@ -606,7 +619,7 @@ public class StockExchangeCsvImportService {
         entity.setPreMarketCloseTime(row.preMarketCloseTime());
         entity.setPostMarketOpenTime(row.postMarketOpenTime());
         entity.setPostMarketCloseTime(row.postMarketCloseTime());
-        entity.setIsActive(row.isActive());
+        entity.setIsActive(row.isActive() && currencySupported);
     }
 
     /**
@@ -637,11 +650,13 @@ public class StockExchangeCsvImportService {
      * @return {@code true} when all imported fields already match
      */
     private boolean matches(StockExchange entity, StockExchangeCsvRow row) {
+        String normalizedCurrency = CurrencyNormalizer.normalize(row.currency());
+        boolean expectedActive = row.isActive() && CurrencyNormalizer.isSupported(normalizedCurrency);
         return Objects.equals(entity.getExchangeName(), row.exchangeName())
                 && Objects.equals(entity.getExchangeAcronym(), row.exchangeAcronym())
                 && Objects.equals(entity.getExchangeMICCode(), row.exchangeMICCode())
                 && Objects.equals(entity.getPolity(), row.polity())
-                && Objects.equals(entity.getCurrency(), row.currency())
+                && Objects.equals(entity.getCurrency(), normalizedCurrency)
                 && Objects.equals(entity.getTimeZone(), row.timeZone())
                 && Objects.equals(entity.getOpenTime(), row.openTime())
                 && Objects.equals(entity.getCloseTime(), row.closeTime())
@@ -649,7 +664,7 @@ public class StockExchangeCsvImportService {
                 && Objects.equals(entity.getPreMarketCloseTime(), row.preMarketCloseTime())
                 && Objects.equals(entity.getPostMarketOpenTime(), row.postMarketOpenTime())
                 && Objects.equals(entity.getPostMarketCloseTime(), row.postMarketCloseTime())
-                && Objects.equals(entity.getIsActive(), row.isActive());
+                && Objects.equals(entity.getIsActive(), expectedActive);
     }
 
     /**

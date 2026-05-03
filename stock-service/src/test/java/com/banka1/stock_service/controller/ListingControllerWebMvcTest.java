@@ -246,6 +246,7 @@ class ListingControllerWebMvcTest {
                         "AAPL",
                         "Apple Inc.",
                         "XNAS",
+                        "USD",
                         new java.math.BigDecimal("180.00000000"),
                         new java.math.BigDecimal("1.50000000"),
                         1_000L,
@@ -260,6 +261,7 @@ class ListingControllerWebMvcTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].ticker").value("AAPL"))
                 .andExpect(jsonPath("$.content[0].exchangeMICCode").value("XNAS"))
+                .andExpect(jsonPath("$.content[0].currency").value("USD"))
                 .andExpect(jsonPath("$.content[0].initialMarginCost").value(99.0));
 
         verify(listingQueryService).getStockListings(
@@ -294,6 +296,7 @@ class ListingControllerWebMvcTest {
                         "EUR/USD",
                         "EUR / USD",
                         "XNAS",
+                        "USD",
                         new java.math.BigDecimal("1.08350000"),
                         new java.math.BigDecimal("0.00000000"),
                         1_000L,
