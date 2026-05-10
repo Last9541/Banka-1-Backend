@@ -7,16 +7,8 @@ upstream client_service {
     server client-service:${CLIENT_SERVICE_PORT};
 }
 
-upstream account_service {
-    server account-service:${ACCOUNT_SERVICE_PORT};
-}
-
-upstream card_service {
-    server card-service:${CARD_SERVICE_PORT};
-}
-
-upstream transfer_service {
-    server transfer-service:${TRANSFER_SERVICE_PORT};
+upstream banking_service {
+    server banking-service:${BANKING_SERVICE_PORT};
 }
 
 upstream exchange_service {
@@ -25,14 +17,6 @@ upstream exchange_service {
 
 upstream verification_service {
     server verification-service:${VERIFICATION_SERVER_PORT};
-}
-
-upstream transaction_service {
-    server transaction-service:${TRANSACTION_SERVER_PORT};
-}
-
-upstream credit_service {
-    server credit-service:${CREDIT_SERVER_PORT};
 }
 
 upstream stock_service {
@@ -45,10 +29,6 @@ upstream order_service {
 
 upstream notification_service {
     server notification-service:${NOTIFICATION_SERVICE_PORT};
-}
-
-upstream banking_service {
-    server banking-service:${BANKING_SERVICE_PORT};
 }
 
 server {
